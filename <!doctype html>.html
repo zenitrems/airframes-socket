@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>airframes stream</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --surface: #151b23;
+        --surface-2: #1b2430;
+        --surface-3: #202b38;
+        --row: #121922;
+        --row2: #16202b;
+        --head: #243140;
+        --line: #2b3747;
+        --text: #e7edf4;
+        --muted: #93a0ad;
+        --accent: #8fa9c8;
+        --accent-2: #c0a36b;
+        --danger: #a66565;
+        --shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(
+            circle at top left,
+            rgba(143, 169, 200, 0.08),
+            transparent 32rem
+          ),
+          linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);
+        color: var(--text);
+        font:
+          15px/1.35 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          "Liberation Mono",
+          monospace;
+      }
+      .topbar {
+        height: 58px;
+        background: rgba(15, 21, 29, 0.96);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+        overflow: hidden;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        color: #f2f5f8;
+        font-size: 16px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+      }
+      .menu {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        display: inline-grid;
+        place-items: center;
+        background: var(--surface);
+        color: var(--accent);
+        font-size: 20px;
+        line-height: 1;
+      }
+      .clock {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      main {
+        width: min(1560px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 22px 0 34px;
+      }
+      h1 {
+        margin: 0 0 16px;
+        padding: 18px 20px;
+        background: linear-gradient(
+          135deg,
+          rgba(21, 27, 35, 0.96),
+          rgba(27, 36, 48, 0.9)
+        );
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        color: #f7f9fb;
+        font-size: 19px;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(130px, 1fr));
+        gap: 10px;
+        margin: 0 0 12px;
+      }
+      .stat {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px 14px;
+        min-width: 0;
+      }
+      .stat b {
+        display: block;
+        color: #f4f7fa;
+        font-size: 20px;
+        font-weight: 650;
+      }
+      .stat span {
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 0 0 14px;
+        padding: 12px;
+        background: rgba(21, 27, 35, 0.78);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+      }
+      .controls input,
+      .controls select {
+        background: #0f151d;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 9px 11px;
+        font: inherit;
+        outline: none;
+      }
+      .controls input:focus,
+      .controls select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(143, 169, 200, 0.12);
+      }
+      .table-wrap {
+        width: 100%;
+        overflow: auto;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1040px;
+      }
+      thead th {
+        background: var(--head);
+        color: #c9d4df;
+        text-align: left;
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+      tbody tr:nth-child(odd) {
+        background: var(--row);
+      }
+      tbody tr:nth-child(even) {
+        background: var(--row2);
+      }
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(43, 55, 71, 0.55);
+        vertical-align: top;
+        white-space: nowrap;
+      }
+      td.text {
+        white-space: normal;
+        min-width: 320px;
+        max-width: 520px;
+      }
+      .detail-btn {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid rgba(143, 169, 200, 0.42);
+        border-radius: 999px;
+        padding: 4px 9px;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .hex-btn {
+        background: rgba(143, 169, 200, 0.08);
+        color: var(--accent);
+        border: 1px solid rgba(143, 169, 200, 0.35);
+        border-radius: 8px;
+        padding: 3px 7px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .hex-btn:disabled {
+        cursor: default;
+        opacity: 0.45;
+      }
+      .detail-btn:hover,
+      .detail-btn:focus,
+      .hex-btn:hover,
+      .hex-btn:focus {
+        background: rgba(143, 169, 200, 0.12);
+        outline: none;
+      }
+      a {
+        color: var(--accent);
+      }
+      .badge {
+        color: #211807;
+        background: var(--accent-2);
+        padding: 2px 7px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .badge.y {
+        color: #fff;
+        background: var(--danger);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .detail-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: none;
+        background: rgba(4, 7, 11, 0.62);
+        backdrop-filter: blur(4px);
+      }
+      .detail-overlay.open {
+        display: block;
+      }
+      .detail-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: min(760px, 100vw);
+        height: 100%;
+        overflow: auto;
+        background: #101720;
+        border-left: 1px solid var(--line);
+        box-shadow: -24px 0 60px rgba(0, 0, 0, 0.35);
+      }
+      .detail-head {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 20px;
+        background: rgba(16, 23, 32, 0.96);
+        border-bottom: 1px solid var(--line);
+      }
+      .detail-title {
+        margin: 0;
+        color: #f7f9fb;
+        font-size: 18px;
+      }
+      .detail-subtitle {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .close-btn {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+      }
+      .detail-body {
+        padding: 18px 20px 28px;
+      }
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .detail-field {
+        min-width: 0;
+        padding: 10px 12px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+      .detail-field span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .detail-field b {
+        display: block;
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+        color: var(--text);
+        font-weight: 600;
+      }
+      .detail-section {
+        margin-top: 16px;
+      }
+      .detail-section h3 {
+        margin: 0 0 8px;
+        color: #f2f5f8;
+        font-size: 14px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .message-text,
+      .json-view {
+        margin: 0;
+        padding: 14px;
+        overflow: auto;
+        background: #0b1017;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: #dce6ef;
+        white-space: pre-wrap;
+      }
+      .json-view {
+        max-height: 42vh;
+        font-size: 12px;
+      }
+      .api-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .api-status {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      @media (max-width: 900px) {
+        main {
+          width: min(100vw - 20px, 1560px);
+          padding: 12px 0 20px;
+        }
+        .topbar {
+          height: 54px;
+          padding: 0 12px;
+        }
+        .clock {
+          display: none;
+        }
+        table {
+          min-width: 900px;
+          font-size: 13px;
+        }
+        .stats {
+          grid-template-columns: repeat(2, minmax(130px, 1fr));
+        }
+        .detail-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="menu">=</span><span>airframes - stream</span>
+      </div>
+      <div class="clock" id="clock"></div>
+    </header>
+    <main>
+      <h1>airframes - live and stored feed</h1>
+      <section class="stats">
+        <div class="stat"><b id="last">-</b><span>latest UTC</span></div>
+        <div class="stat"><b id="status">loading</b><span>status</span></div>
+      </section>
+      <section class="controls">
+        <input id="q" placeholder="filter icao, tail, text..." size="42" />
+        <select id="mil">
+          <option value="all">all</option>
+          <option value="true">military only</option>
+          <option value="false">non-military</option>
+        </select>
+        <select id="limit">
+          <option>100</option>
+          <option selected>250</option>
+          <option>500</option>
+          <option>1000</option>
+        </select>
+      </section>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>time</th>
+              <th>icao</th>
+              <th>call(s)</th>
+              <th>tail</th>
+              <th>label</th>
+              <th>text</th>
+              <th>details</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+    <div class="detail-overlay" id="detailOverlay" aria-hidden="true">
+      <aside class="detail-panel" aria-label="message details">
+        <header class="detail-head">
+          <div>
+            <h2 class="detail-title" id="detailTitle">message</h2>
+            <p class="detail-subtitle" id="detailSubtitle"></p>
+          </div>
+          <button class="close-btn" type="button" onclick="closeDetails()">
+            x
+          </button>
+        </header>
+        <div class="detail-body">
+          <section class="detail-grid" id="detailGrid"></section>
+          <section class="detail-section">
+            <h3>message text</h3>
+            <pre class="message-text" id="detailText"></pre>
+          </section>
+          <section class="detail-section">
+            <h3>airframe api</h3>
+            <div class="api-actions">
+              <button class="detail-btn" type="button" id="loadAirframeApi">
+                load airframe data
+              </button>
+              <span class="api-status" id="airframeApiStatus">not loaded</span>
+            </div>
+            <pre class="json-view" id="airframeApiJson">Press load airframe data to query api.airframes.io.</pre>
+          </section>
+          <section class="detail-section">
+            <h3>raw json</h3>
+            <pre class="json-view" id="detailJson"></pre>
+          </section>
+        </div>
+      </aside>
+    </div>
+    <script>
+      const rowsEl = document.getElementById("rows");
+      const qEl = document.getElementById("q");
+      const milEl = document.getElementById("mil");
+      const limitEl = document.getElementById("limit");
+      const detailOverlay = document.getElementById("detailOverlay");
+      const detailTitle = document.getElementById("detailTitle");
+      const detailSubtitle = document.getElementById("detailSubtitle");
+      const detailGrid = document.getElementById("detailGrid");
+      const detailText = document.getElementById("detailText");
+      const detailJson = document.getElementById("detailJson");
+      const loadAirframeApiBtn = document.getElementById("loadAirframeApi");
+      const airframeApiStatus = document.getElementById("airframeApiStatus");
+      const airframeApiJson = document.getElementById("airframeApiJson");
+      let events = [];
+      let selectedEvent = null;
+      function esc(v) {
+        return String(v ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      }
+      function shortTime(v) {
+        return String(v || "").replace("Z", "Z");
+      }
+      function yesNo(v) {
+        return v === true
+          ? '<span class="badge y">Y</span>'
+          : v === false
+            ? '<span class="badge">N</span>'
+            : "";
+      }
+      function formatValue(v) {
+        if (v === null || v === undefined || v === "") return "-";
+        return String(v);
+      }
+      function detailField(label, value) {
+        return `<div class="detail-field"><span>${esc(label)}</span><b>${esc(formatValue(value))}</b></div>`;
+      }
+      function eventTitle(e) {
+        return e.flight || e.tail || e.airframe_icao || e.id || "message";
+      }
+      function hexButton(icao, index) {
+        if (!icao) return "";
+        return `<button class="hex-btn" type="button" data-api-index="${index}" title="Load airframes API data">${esc(icao)}</button>`;
+      }
+      function openDetails(index) {
+        const e = events[index];
+        if (!e) return;
+
+        selectedEvent = e;
+        const raw = e.raw || e;
+        detailTitle.textContent = eventTitle(e);
+        detailSubtitle.textContent = `${formatValue(e.timestamp)} · ${formatValue(e.station)} · ${formatValue(e.source || e.source_type)}`;
+        detailGrid.innerHTML = [
+          detailField("id", e.id),
+          detailField("timestamp", e.timestamp),
+          detailField("received", e.received_at),
+          detailField("station", e.station),
+          detailField("country", e.country),
+          detailField("flight", e.flight),
+          detailField("icao", e.airframe_icao),
+          detailField("tail", e.tail),
+          detailField("military", e.military),
+          detailField("source", e.source),
+          detailField("source type", e.source_type),
+          detailField("frequency", e.frequency),
+          detailField("label", e.label),
+          detailField("mode", e.mode),
+        ].join("");
+        detailText.textContent = formatValue(e.text);
+        detailJson.textContent = JSON.stringify(raw, null, 2);
+        airframeApiStatus.textContent = e.airframe_icao
+          ? "not loaded"
+          : "no hex available";
+        airframeApiJson.textContent = e.airframe_icao
+          ? "Press load airframe data to query api.airframes.io."
+          : "This message does not include an airframe hex.";
+        loadAirframeApiBtn.disabled = !e.airframe_icao;
+        detailOverlay.classList.add("open");
+      }
+      function closeDetails() {
+        detailOverlay.classList.remove("open");
+      }
+      async function loadAirframeApi(eventData = selectedEvent) {
+        const icao = eventData?.airframe_icao;
+        if (!icao) return;
+
+        airframeApiStatus.textContent = "loading...";
+        airframeApiJson.textContent = "";
+        loadAirframeApiBtn.disabled = true;
+
+        try {
+          const res = await fetch(
+            `/airframes/api/icao/${encodeURIComponent(icao)}`,
+            { cache: "no-store" },
+          );
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload.error || `${res.status} ${res.statusText}`);
+          }
+          airframeApiStatus.textContent = "loaded";
+          airframeApiJson.textContent = JSON.stringify(payload, null, 2);
+        } catch (err) {
+          airframeApiStatus.textContent = "error";
+          airframeApiJson.textContent = String(err.message || err);
+        } finally {
+          loadAirframeApiBtn.disabled = false;
+        }
+      }
+      function keyText(e) {
+        return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, e.text]
+          .join(" ")
+          .toLowerCase();
+      }
+      function render() {
+        const q = qEl.value.trim().toLowerCase();
+        const mil = milEl.value;
+        const filtered = events.filter(
+          (e) =>
+            (!q || keyText(e).includes(q)) &&
+            (mil === "all" || String(e.military) === mil),
+        );
+        rowsEl.innerHTML = filtered
+          .map((e) => {
+            const index = events.indexOf(e);
+            return `<tr><td>${esc(shortTime(e.timestamp))}</td><td>${hexButton(e.airframe_icao, index)}</td><td>${esc(e.flight)}</td><td>${esc(e.tail)}</td><td>${esc(e.label)}</td><td class="text">${esc(e.text)}</td><td><button class="detail-btn" type="button" data-index="${index}">details</button></td></tr>`;
+          })
+          .join("");
+        document.getElementById("last").textContent = events[0]?.timestamp
+          ? events[0].timestamp.slice(11, 19)
+          : "-";
+      }
+      async function load() {
+        try {
+          const res = await fetch(
+            `/airframes/events?limit=${encodeURIComponent(limitEl.value)}`,
+            { cache: "no-store" },
+          );
+          if (!res.ok) throw new Error(res.status + " " + res.statusText);
+          events = await res.json();
+          document.getElementById("status").textContent = "live";
+          render();
+        } catch (err) {
+          document.getElementById("status").textContent = "error";
+          console.error(err);
+        }
+      }
+      function tick() {
+        document.getElementById("clock").textContent =
+          "UTC " +
+          new Date().toISOString().replace("T", " ").slice(11, 19) +
+          " " +
+          new Date().toISOString().slice(0, 10);
+      }
+      qEl.addEventListener("input", render);
+      milEl.addEventListener("change", render);
+      limitEl.addEventListener("change", load);
+      rowsEl.addEventListener("click", (event) => {
+        const apiButton = event.target.closest(".hex-btn");
+        if (apiButton) {
+          const index = Number(apiButton.dataset.apiIndex);
+          openDetails(index);
+          loadAirframeApi(events[index]);
+          return;
+        }
+
+        const button = event.target.closest(".detail-btn");
+        if (!button) return;
+        openDetails(Number(button.dataset.index));
+      });
+      loadAirframeApiBtn.addEventListener("click", () => loadAirframeApi());
+      detailOverlay.addEventListener("click", (event) => {
+        if (event.target === detailOverlay) closeDetails();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDetails();
+      });
+      setInterval(load, 3000);
+      setInterval(tick, 1000);
+      tick();
+      load();
+    </script>
+  </body>
+</html>

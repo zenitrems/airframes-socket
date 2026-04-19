@@ -13,7 +13,7 @@ import socketio
 
 
 DEFAULT_INLINE_WIDTH = 120
-DEFAULT_NODE_RED_URL = "https://orange.prefix64.org:1880/airframes"
+DEFAULT_NODE_RED_URL = "https://host:1880/airframes"
 INLINE_MIN_TEXT_WIDTH = 12
 INLINE_COLUMN_SEPARATOR = " | "
 INLINE_SUMMARY_BASE_COLUMNS = [
@@ -237,9 +237,9 @@ def inline_summary_columns(max_width=None):
             terminal_width - fixed_width - separator_width,
         )
 
-    return [
-        (column["name"], column["width"]) for column in columns
-    ] + [("text", text_width)]
+    return [(column["name"], column["width"]) for column in columns] + [
+        ("text", text_width)
+    ]
 
 
 def inline_summary_header(max_width=None):
