@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "Airframes Stream",
     "disabled": false,
-    "info": "Receives JSON events from socket_client.py via HTTP POST /airframes. Dashboard: https://orange.prefix64.org:1880/airframes-dashboard"
+    "info": "Receives JSON events from socket_client.py via HTTP POST /airframes.\nDashboard: https://orange.prefix64.org:1880/airframes-dashboard\n\nACAS decoder: @airframes/acars-decoder (npm) runs natively in Node-RED function nodes.\nlibacars:      decode_acars_apps binary (kept for ARINC-622 / CPDLC labels).\n\nInstall before deploying:\n  cd ~/.node-red && npm install @airframes/acars-decoder\nThen in Node-RED Settings → functionExternalModules: true"
   },
   {
     "id": "airframes-http-in",
@@ -44,8 +44,8 @@
     "type": "function",
     "z": "airframes-tab",
     "name": "Normalize, cache and route",
-    "func": "const DROP_ACARS_LABELS = [\"_d\"];\nconst LIBACARS_LABELS = [\"A6\", \"AA\", \"B6\", \"BA\", \"H1\", \"SA\", \"MA\"];\n\nfunction looksLikeAirframesEvent(value) {\n    return value && typeof value === \"object\" && (\n        value.id || value.timestamp || value.station || value.airframe || value.source\n    );\n}\n\nfunction extractEvent(value) {\n    if (!value || typeof value !== \"object\") {\n        return {};\n    }\n\n    if (looksLikeAirframesEvent(value)) {\n        return value;\n    }\n\n    for (const key of [\"payload\", \"event\", \"message\", \"data\"]) {\n        if (looksLikeAirframesEvent(value[key])) {\n            return value[key];\n        }\n    }\n\n    return value;\n}\n\nfunction response(payload) {\n    return {\n        req: msg.req,\n        res: msg.res,\n        statusCode: 200,\n        headers: { \"content-type\": \"application/json\" },\n        payload\n    };\n}\n\nfunction inferDirection(event) {\n    const direction = String(event.link_direction || \"\").toLowerCase();\n    if ([\"u\", \"uplink\", \"ground-to-air\", \"ground_to_air\"].includes(direction)) {\n        return \"u\";\n    }\n    if ([\"d\", \"downlink\", \"air-to-ground\", \"air_to_ground\"].includes(direction)) {\n        return \"d\";\n    }\n    return \"d\";\n}\n\nfunction shellQuote(value) {\n    return `'${String(value).replace(/'/g, `'\\''`)}'`;\n}\n\nfunction buildLibacarsMsg(event, normalized) {\n    const label = String(event.label || \"\").trim().toUpperCase();\n    const text = String(event.text || \"\");\n\n    if (!label || !text || !LIBACARS_LABELS.includes(label)) {\n        return null;\n    }\n\n    const direction = inferDirection(event);\n    return {\n        payload: `${direction} ${shellQuote(label)} ${shellQuote(text)}`,\n        normalized,\n        libacars_meta: { label, direction }\n    };\n}\n\nconst envelope = msg.payload || {};\nconst event = extractEvent(envelope);\nconst label = String(event.label || \"\").trim().toLowerCase();\n\nif (DROP_ACARS_LABELS.includes(label)) {\n    return [\n        null,\n        null,\n        response({\n            ok: true,\n            dropped: true,\n            reason: \"acars_label\",\n            label: event.label,\n            id: event.id\n        }),\n        null\n    ];\n}\n\nconst flight = event.flight || {};\nconst airframe = event.airframe || {};\nconst station = event.station || {};\nconst now = new Date().toISOString();\n\nconst normalized = {\n    received_at: now,\n    id: event.id,\n    timestamp: event.timestamp || event.created_at || now,\n    station: station.ident,\n    country: station.country_code,\n    flight: flight.flight_iata || flight.flight_icao || flight.flight,\n    airframe_icao: airframe.icao,\n    tail: airframe.tail || event.tail,\n    military: airframe.military,\n    source: event.source,\n    source_type: event.source_type,\n    frequency: event.frequency,\n    label: event.label,\n    mode: event.mode,\n    text: event.text,\n    raw: event\n};\n\nlet recent = flow.get(\"airframes_recent\") || [];\nrecent.unshift(normalized);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nconst debugMsg = { payload: normalized };\nconst fileMsg = { payload: JSON.stringify(normalized) };\nconst responseMsg = response({\n    ok: true,\n    id: normalized.id,\n    received_at: normalized.received_at\n});\nconst libacarsMsg = buildLibacarsMsg(event, normalized);\n\nreturn [debugMsg, fileMsg, responseMsg, libacarsMsg];",
-    "outputs": 4,
+    "func": "const DROP_ACARS_LABELS = [\"_d\"];\nconst LIBACARS_LABELS = [\"A6\", \"AA\", \"B6\", \"BA\", \"H1\", \"SA\", \"MA\"];\n\nfunction looksLikeAirframesEvent(value) {\n    return value && typeof value === \"object\" && (\n        value.id || value.timestamp || value.station || value.airframe || value.source\n    );\n}\n\nfunction extractEvent(value) {\n    if (!value || typeof value !== \"object\") return {};\n    if (looksLikeAirframesEvent(value)) return value;\n    for (const key of [\"payload\", \"event\", \"message\", \"data\"]) {\n        if (looksLikeAirframesEvent(value[key])) return value[key];\n    }\n    return value;\n}\n\nfunction response(payload) {\n    return {\n        req: msg.req,\n        res: msg.res,\n        statusCode: 200,\n        headers: { \"content-type\": \"application/json\" },\n        payload\n    };\n}\n\nfunction inferDirection(event) {\n    const direction = String(event.link_direction || \"\").toLowerCase();\n    if ([\"u\", \"uplink\", \"ground-to-air\", \"ground_to_air\"].includes(direction)) return \"u\";\n    if ([\"d\", \"downlink\", \"air-to-ground\", \"air_to_ground\"].includes(direction)) return \"d\";\n    return \"d\";\n}\n\nfunction shellQuote(value) {\n    return `'${String(value).replace(/'/g, `'\\''`)}'`;\n}\n\nfunction buildLibacarsMsg(event, normalized) {\n    const label = String(event.label || \"\").trim().toUpperCase();\n    const text  = String(event.text  || \"\");\n    if (!label || !text || !LIBACARS_LABELS.includes(label)) return null;\n    const direction = inferDirection(event);\n    return {\n        payload: `${direction} ${shellQuote(label)} ${shellQuote(text)}`,\n        normalized,\n        libacars_meta: { label, direction }\n    };\n}\n\nconst envelope = msg.payload || {};\nconst event    = extractEvent(envelope);\nconst label    = String(event.label || \"\").trim().toLowerCase();\n\nif (DROP_ACARS_LABELS.includes(label)) {\n    return [\n        null, null,\n        response({ ok: true, dropped: true, reason: \"acars_label\", label: event.label, id: event.id }),\n        null, null\n    ];\n}\n\nconst flight  = event.flight   || {};\nconst airframe = event.airframe || {};\nconst station  = event.station  || {};\nconst now      = new Date().toISOString();\n\nconst normalized = {\n    received_at:   now,\n    id:            event.id,\n    timestamp:     event.timestamp || event.created_at || now,\n    station:       station.ident,\n    country:       station.country_code,\n    flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n    airframe_icao: airframe.icao,\n    tail:          airframe.tail || event.tail,\n    military:      airframe.military,\n    source:        event.source,\n    source_type:   event.source_type,\n    frequency:     event.frequency,\n    label:         event.label,\n    mode:          event.mode,\n    text:          event.text,\n    raw:           event\n};\n\nlet recent = flow.get(\"airframes_recent\") || [];\nrecent.unshift(normalized);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nconst debugMsg    = { payload: normalized };\nconst fileMsg     = { payload: JSON.stringify(normalized) };\nconst responseMsg = response({ ok: true, id: normalized.id, received_at: normalized.received_at });\nconst libacarsMsg = buildLibacarsMsg(event, normalized);\n\n// Output 5: pass ALL messages (with label+text) to acars-decoder-typescript\nconst acarsDecoderMsg = (normalized.label && normalized.text)\n    ? { payload: normalized, normalized }\n    : null;\n\nreturn [debugMsg, fileMsg, responseMsg, libacarsMsg, acarsDecoderMsg];",
+    "outputs": 5,
     "timeout": 0,
     "noerr": 0,
     "initialize": "",
@@ -65,6 +65,37 @@
       ],
       [
         "airframes-libacars-exec"
+      ],
+      [
+        "airframes-acars-decoder"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-acars-decoder",
+    "type": "function",
+    "z": "airframes-tab",
+    "name": "acars-decoder-typescript decode",
+    "func": "// ── acars-decoder-typescript integration ──────────────────────────────────\n// Requires: cd ~/.node-red && npm install @airframes/acars-decoder\n// Node-RED settings.js must have:  functionExternalModules: true\n//\n// This node decodes the ACARS text payload for ALL labels using the\n// @airframes/acars-decoder npm package, then enriches the event and\n// updates the flow-level cache so the dashboard shows decoded data.\n// It runs IN PARALLEL with the libacars exec branch (which handles\n// ARINC-622 / CPDLC labels via the C binary decode_acars_apps).\n// ──────────────────────────────────────────────────────────────────────────\n\nconst normalized = msg.normalized || msg.payload || {};\nconst event      = normalized.raw || {};\n\nconst label  = String(normalized.label  || event.label  || \"\").trim().toUpperCase();\nconst text   = String(normalized.text   || event.text   || \"\").trim();\nconst tail   = String(normalized.tail   || event.tail   || \"\").trim();\nconst flight = String(normalized.flight || \"\").trim();\n\nif (!label || !text) {\n    return [null, null];\n}\n\nlet decoded = null;\nlet decodeError = null;\n\ntry {\n    // The module is registered in the \"Setup\" tab of this function node\n    // as:  Name = AcarsDecoder  |  Module = @airframes/acars-decoder\n    const { MessageDecoder } = AcarsDecoder;\n    const decoder = new MessageDecoder();\n\n    // Build the message object the decoder expects\n    const msgObj = { label, text };\n    if (tail)   msgObj.tail   = tail;\n    if (flight) msgObj.flight = flight;\n\n    decoded = decoder.decode(msgObj);\n} catch (err) {\n    decodeError = err.message || String(err);\n    node.warn(\"acars-decoder error [\" + label + \"]: \" + decodeError);\n}\n\n// Only enrich if the decoder produced meaningful output\nif (!decoded) {\n    return [null, null];\n}\n\nconst enriched = {\n    ...normalized,\n    acars_decoded: {\n        ok:        true,\n        label,\n        decoded,\n        decoder:   \"acars-decoder-typescript\"\n    }\n};\n\n// Update the flow cache: replace existing entry by key\nlet recent = flow.get(\"airframes_recent\") || [];\nconst key  = enriched.id || `${enriched.timestamp}-${enriched.station}-${enriched.text}`;\nrecent = recent.filter(e => {\n    const k = e.id || `${e.timestamp}-${e.station}-${e.text}`;\n    return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nreturn [\n    { payload: enriched },\n    { payload: JSON.stringify(enriched) }\n];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "AcarsDecoder",
+        "module": "@airframes/acars-decoder"
+      }
+    ],
+    "x": 880,
+    "y": 310,
+    "wires": [
+      [
+        "airframes-debug"
+      ],
+      [
+        "airframes-file"
       ]
     ]
   },
@@ -114,218 +145,6 @@
     "wires": []
   },
   {
-    "id": "airframes-dashboard-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes-dashboard",
-    "url": "/airframes-dashboard",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 160,
-    "y": 250,
-    "wires": [
-      [
-        "airframes-dashboard-template"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-dashboard-template",
-    "type": "template",
-    "z": "airframes-tab",
-    "name": "Dashboard HTML",
-    "field": "payload",
-    "fieldType": "msg",
-    "format": "handlebars",
-    "syntax": "mustache",
-    "template": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>airframes stream</title>\n    <style>\n      :root {\n        --bg: #0d1117;\n        --surface: #151b23;\n        --surface-2: #1b2430;\n        --surface-3: #202b38;\n        --row: #121922;\n        --row2: #16202b;\n        --head: #243140;\n        --line: #2b3747;\n        --text: #e7edf4;\n        --muted: #93a0ad;\n        --accent: #8fa9c8;\n        --accent-2: #c0a36b;\n        --danger: #a66565;\n        --shadow: 0 20px 50px rgba(0, 0, 0, 0.28);\n      }\n      * {\n        box-sizing: border-box;\n      }\n      body {\n        margin: 0;\n        background:\n          radial-gradient(\n            circle at top left,\n            rgba(143, 169, 200, 0.08),\n            transparent 32rem\n          ),\n          linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);\n        color: var(--text);\n        font:\n          15px/1.35 ui-monospace,\n          SFMono-Regular,\n          Menlo,\n          Consolas,\n          \"Liberation Mono\",\n          monospace;\n      }\n      .topbar {\n        height: 58px;\n        background: rgba(15, 21, 29, 0.96);\n        display: flex;\n        align-items: center;\n        justify-content: space-between;\n        padding: 0 24px;\n        border-bottom: 1px solid var(--line);\n        white-space: nowrap;\n        overflow: hidden;\n        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);\n      }\n      .brand {\n        display: flex;\n        align-items: center;\n        gap: 14px;\n        color: #f2f5f8;\n        font-size: 16px;\n        font-weight: 650;\n        letter-spacing: 0.02em;\n      }\n      .menu {\n        width: 34px;\n        height: 34px;\n        border: 1px solid var(--line);\n        border-radius: 10px;\n        display: inline-grid;\n        place-items: center;\n        background: var(--surface);\n        color: var(--accent);\n        font-size: 20px;\n        line-height: 1;\n        text-decoration: none;\n      }\n      .menu:hover,\n      .menu:focus {\n        background: rgba(143, 169, 200, 0.12);\n        outline: none;\n      }\n      .clock {\n        color: var(--muted);\n        font-size: 14px;\n      }\n      main {\n        width: min(1560px, calc(100vw - 32px));\n        margin: 0 auto;\n        padding: 22px 0 34px;\n      }\n      h1 {\n        margin: 0 0 16px;\n        padding: 18px 20px;\n        background: linear-gradient(\n          135deg,\n          rgba(21, 27, 35, 0.96),\n          rgba(27, 36, 48, 0.9)\n        );\n        border: 1px solid var(--line);\n        border-radius: 18px;\n        box-shadow: var(--shadow);\n        color: #f7f9fb;\n        font-size: 19px;\n        font-weight: 650;\n        letter-spacing: 0.01em;\n      }\n      .stats {\n        display: grid;\n        grid-template-columns: repeat(4, minmax(130px, 1fr));\n        gap: 10px;\n        margin: 0 0 12px;\n      }\n      .stat {\n        background: var(--surface);\n        border: 1px solid var(--line);\n        border-radius: 14px;\n        padding: 12px 14px;\n        min-width: 0;\n      }\n      .stat b {\n        display: block;\n        color: #f4f7fa;\n        font-size: 20px;\n        font-weight: 650;\n      }\n      .stat span {\n        color: var(--muted);\n        font-size: 12px;\n        text-transform: uppercase;\n        letter-spacing: 0.08em;\n      }\n      .controls {\n        display: flex;\n        gap: 10px;\n        flex-wrap: wrap;\n        margin: 0 0 14px;\n        padding: 12px;\n        background: rgba(21, 27, 35, 0.78);\n        border: 1px solid var(--line);\n        border-radius: 16px;\n      }\n      .controls input,\n      .controls select {\n        background: #0f151d;\n        color: var(--text);\n        border: 1px solid var(--line);\n        border-radius: 10px;\n        padding: 9px 11px;\n        font: inherit;\n        outline: none;\n      }\n      .controls input:focus,\n      .controls select:focus {\n        border-color: var(--accent);\n        box-shadow: 0 0 0 3px rgba(143, 169, 200, 0.12);\n      }\n      .table-wrap {\n        width: 100%;\n        overflow: auto;\n        background: var(--surface);\n        border: 1px solid var(--line);\n        border-radius: 18px;\n        box-shadow: var(--shadow);\n      }\n      table {\n        width: 100%;\n        border-collapse: collapse;\n        min-width: 1040px;\n      }\n      thead th {\n        background: var(--head);\n        color: #c9d4df;\n        text-align: left;\n        padding: 9px 12px;\n        border-bottom: 1px solid var(--line);\n        font-size: 12px;\n        font-weight: 650;\n        letter-spacing: 0.06em;\n        text-transform: uppercase;\n        position: sticky;\n        top: 0;\n        z-index: 2;\n      }\n      tbody tr:nth-child(odd) {\n        background: var(--row);\n      }\n      tbody tr:nth-child(even) {\n        background: var(--row2);\n      }\n      td {\n        padding: 10px 12px;\n        border-bottom: 1px solid rgba(43, 55, 71, 0.55);\n        vertical-align: top;\n        white-space: nowrap;\n      }\n      td.text {\n        white-space: normal;\n        min-width: 320px;\n        max-width: 520px;\n      }\n      .detail-btn {\n        background: transparent;\n        color: var(--accent);\n        border: 1px solid rgba(143, 169, 200, 0.42);\n        border-radius: 999px;\n        padding: 4px 9px;\n        font: inherit;\n        font-size: 12px;\n        cursor: pointer;\n      }\n      .hex-btn {\n        background: rgba(143, 169, 200, 0.08);\n        color: var(--accent);\n        border: 1px solid rgba(143, 169, 200, 0.35);\n        border-radius: 8px;\n        padding: 3px 7px;\n        font: inherit;\n        cursor: pointer;\n      }\n      .hex-btn:disabled {\n        cursor: default;\n        opacity: 0.45;\n      }\n      .detail-btn:hover,\n      .detail-btn:focus,\n      .hex-btn:hover,\n      .hex-btn:focus {\n        background: rgba(143, 169, 200, 0.12);\n        outline: none;\n      }\n      a {\n        color: var(--accent);\n      }\n      .badge {\n        color: #211807;\n        background: var(--accent-2);\n        padding: 2px 7px;\n        border-radius: 999px;\n        font-size: 12px;\n        font-weight: 700;\n      }\n      .badge.y {\n        color: #fff;\n        background: var(--danger);\n      }\n      .muted {\n        color: var(--muted);\n      }\n      .detail-overlay {\n        position: fixed;\n        inset: 0;\n        z-index: 10;\n        display: none;\n        background: rgba(4, 7, 11, 0.62);\n        backdrop-filter: blur(4px);\n      }\n      .detail-overlay.open {\n        display: block;\n      }\n      .detail-panel {\n        position: absolute;\n        top: 0;\n        right: 0;\n        width: min(760px, 100vw);\n        height: 100%;\n        overflow: auto;\n        background: #101720;\n        border-left: 1px solid var(--line);\n        box-shadow: -24px 0 60px rgba(0, 0, 0, 0.35);\n      }\n      .detail-head {\n        position: sticky;\n        top: 0;\n        z-index: 2;\n        display: flex;\n        align-items: flex-start;\n        justify-content: space-between;\n        gap: 16px;\n        padding: 18px 20px;\n        background: rgba(16, 23, 32, 0.96);\n        border-bottom: 1px solid var(--line);\n      }\n      .detail-title {\n        margin: 0;\n        color: #f7f9fb;\n        font-size: 18px;\n      }\n      .detail-subtitle {\n        margin: 4px 0 0;\n        color: var(--muted);\n        font-size: 13px;\n      }\n      .close-btn {\n        width: 34px;\n        height: 34px;\n        border: 1px solid var(--line);\n        border-radius: 10px;\n        background: var(--surface);\n        color: var(--text);\n        cursor: pointer;\n        font: inherit;\n      }\n      .detail-body {\n        padding: 18px 20px 28px;\n      }\n      .detail-grid {\n        display: grid;\n        grid-template-columns: repeat(2, minmax(0, 1fr));\n        gap: 10px;\n        margin-bottom: 16px;\n      }\n      .detail-field {\n        min-width: 0;\n        padding: 10px 12px;\n        background: var(--surface);\n        border: 1px solid var(--line);\n        border-radius: 12px;\n      }\n      .detail-field span {\n        display: block;\n        color: var(--muted);\n        font-size: 11px;\n        letter-spacing: 0.08em;\n        text-transform: uppercase;\n      }\n      .detail-field b {\n        display: block;\n        margin-top: 4px;\n        overflow-wrap: anywhere;\n        color: var(--text);\n        font-weight: 600;\n      }\n      .detail-section {\n        margin-top: 16px;\n      }\n      .detail-section h3 {\n        margin: 0 0 8px;\n        color: #f2f5f8;\n        font-size: 14px;\n        letter-spacing: 0.05em;\n        text-transform: uppercase;\n      }\n      .message-text,\n      .json-view {\n        margin: 0;\n        padding: 14px;\n        overflow: auto;\n        background: #0b1017;\n        border: 1px solid var(--line);\n        border-radius: 12px;\n        color: #dce6ef;\n        white-space: pre-wrap;\n      }\n      .json-view {\n        max-height: 42vh;\n        font-size: 12px;\n      }\n      .api-actions {\n        display: flex;\n        align-items: center;\n        gap: 10px;\n        margin-bottom: 10px;\n      }\n      .api-status {\n        color: var(--muted);\n        font-size: 12px;\n      }\n      @media (max-width: 900px) {\n        main {\n          width: min(100vw - 20px, 1560px);\n          padding: 12px 0 20px;\n        }\n        .topbar {\n          height: 54px;\n          padding: 0 12px;\n        }\n        .clock {\n          display: none;\n        }\n        table {\n          min-width: 900px;\n          font-size: 13px;\n        }\n        .stats {\n          grid-template-columns: repeat(2, minmax(130px, 1fr));\n        }\n        .detail-grid {\n          grid-template-columns: 1fr;\n        }\n      }\n    </style>\n  </head>\n  <body>\n    <header class=\"topbar\">\n      <div class=\"brand\">\n        <a class=\"menu\" href=\"/airframes-stats\" title=\"Open stats\">=</a\n        ><span>airframes - stream</span>\n      </div>\n      <div class=\"clock\" id=\"clock\"></div>\n    </header>\n    <main>\n      <h1>airframes - live and stored feed</h1>\n      <section class=\"stats\">\n        <div class=\"stat\"><b id=\"last\">-</b><span>latest UTC</span></div>\n        <div class=\"stat\"><b id=\"status\">loading</b><span>status</span></div>\n      </section>\n      <section class=\"controls\">\n        <input id=\"q\" placeholder=\"filter icao, tail, text...\" size=\"42\" />\n        <select id=\"mil\">\n          <option value=\"all\">all</option>\n          <option value=\"true\">military only</option>\n          <option value=\"false\">non-military</option>\n        </select>\n        <select id=\"limit\">\n          <option>100</option>\n          <option selected>250</option>\n          <option>500</option>\n          <option>1000</option>\n        </select>\n      </section>\n      <div class=\"table-wrap\">\n        <table>\n          <thead>\n            <tr>\n              <th>time</th>\n              <th>icao</th>\n              <th>call(s)</th>\n              <th>tail</th>\n              <th>label</th>\n              <th>text</th>\n              <th>details</th>\n            </tr>\n          </thead>\n          <tbody id=\"rows\"></tbody>\n        </table>\n      </div>\n    </main>\n    <div class=\"detail-overlay\" id=\"detailOverlay\" aria-hidden=\"true\">\n      <aside class=\"detail-panel\" aria-label=\"message details\">\n        <header class=\"detail-head\">\n          <div>\n            <h2 class=\"detail-title\" id=\"detailTitle\">message</h2>\n            <p class=\"detail-subtitle\" id=\"detailSubtitle\"></p>\n          </div>\n          <button class=\"close-btn\" type=\"button\" onclick=\"closeDetails()\">\n            x\n          </button>\n        </header>\n        <div class=\"detail-body\">\n          <section class=\"detail-grid\" id=\"detailGrid\"></section>\n          <section class=\"detail-section\">\n            <h3>message text</h3>\n            <pre class=\"message-text\" id=\"detailText\"></pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>libacars decode</h3>\n            <span class=\"api-status\" id=\"libacarsStatus\">not decoded</span>\n            <pre class=\"json-view\" id=\"libacarsJson\">No libacars decode available for this message.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>airframe api</h3>\n            <div class=\"api-actions\">\n              <button class=\"detail-btn\" type=\"button\" id=\"loadAirframeApi\">\n                load airframe data\n              </button>\n              <span class=\"api-status\" id=\"airframeApiStatus\">not loaded</span>\n            </div>\n            <pre class=\"json-view\" id=\"airframeApiJson\">Press load airframe data to query api.airframes.io.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>raw json</h3>\n            <pre class=\"json-view\" id=\"detailJson\"></pre>\n          </section>\n        </div>\n      </aside>\n    </div>\n    <script>\n      const rowsEl = document.getElementById(\"rows\");\n      const qEl = document.getElementById(\"q\");\n      const milEl = document.getElementById(\"mil\");\n      const limitEl = document.getElementById(\"limit\");\n      const detailOverlay = document.getElementById(\"detailOverlay\");\n      const detailTitle = document.getElementById(\"detailTitle\");\n      const detailSubtitle = document.getElementById(\"detailSubtitle\");\n      const detailGrid = document.getElementById(\"detailGrid\");\n      const detailText = document.getElementById(\"detailText\");\n      const detailJson = document.getElementById(\"detailJson\");\n      const libacarsStatus = document.getElementById(\"libacarsStatus\");\n      const libacarsJson = document.getElementById(\"libacarsJson\");\n      const loadAirframeApiBtn = document.getElementById(\"loadAirframeApi\");\n      const airframeApiStatus = document.getElementById(\"airframeApiStatus\");\n      const airframeApiJson = document.getElementById(\"airframeApiJson\");\n      let events = [];\n      let selectedEvent = null;\n      function esc(v) {\n        return String(v ?? \"\").replace(\n          /[&<>\"']/g,\n          (c) =>\n            ({\n              \"&\": \"&amp;\",\n              \"<\": \"&lt;\",\n              \">\": \"&gt;\",\n              '\"': \"&quot;\",\n              \"'\": \"&#39;\",\n            })[c],\n        );\n      }\n      function shortTime(v) {\n        return String(v || \"\").replace(\"Z\", \"Z\");\n      }\n      function yesNo(v) {\n        return v === true\n          ? '<span class=\"badge y\">Y</span>'\n          : v === false\n            ? '<span class=\"badge\">N</span>'\n            : \"\";\n      }\n      function formatValue(v) {\n        if (v === null || v === undefined || v === \"\") return \"-\";\n        return String(v);\n      }\n      function detailField(label, value) {\n        return `<div class=\"detail-field\"><span>${esc(label)}</span><b>${esc(formatValue(value))}</b></div>`;\n      }\n      function eventTitle(e) {\n        return e.flight || e.tail || e.airframe_icao || e.id || \"message\";\n      }\n      function hexButton(icao, index) {\n        if (!icao) return \"\";\n        return `<button class=\"hex-btn\" type=\"button\" data-api-index=\"${index}\" title=\"Load airframes API data\">${esc(icao)}</button>`;\n      }\n      function openDetails(index) {\n        const e = events[index];\n        if (!e) return;\n\n        selectedEvent = e;\n        const raw = e.raw || e;\n        detailTitle.textContent = eventTitle(e);\n        detailSubtitle.textContent = `${formatValue(e.timestamp)} · ${formatValue(e.station)} · ${formatValue(e.source || e.source_type)}`;\n        detailGrid.innerHTML = [\n          detailField(\"id\", e.id),\n          detailField(\"timestamp\", e.timestamp),\n          detailField(\"received\", e.received_at),\n          detailField(\"station\", e.station),\n          detailField(\"country\", e.country),\n          detailField(\"flight\", e.flight),\n          detailField(\"icao\", e.airframe_icao),\n          detailField(\"tail\", e.tail),\n          detailField(\"military\", e.military),\n          detailField(\"source\", e.source),\n          detailField(\"source type\", e.source_type),\n          detailField(\"frequency\", e.frequency),\n          detailField(\"label\", e.label),\n          detailField(\"mode\", e.mode),\n          detailField(\"libacars\", e.libacars?.ok ? \"decoded\" : \"not decoded\"),\n        ].join(\"\");\n        detailText.textContent = formatValue(e.text);\n        libacarsStatus.textContent = e.libacars?.ok\n          ? \"decoded\"\n          : \"not decoded\";\n        libacarsJson.textContent = e.libacars\n          ? JSON.stringify(e.libacars, null, 2)\n          : \"No libacars decode available for this message.\";\n        detailJson.textContent = JSON.stringify(raw, null, 2);\n        airframeApiStatus.textContent = e.airframe_icao\n          ? \"not loaded\"\n          : \"no hex available\";\n        airframeApiJson.textContent = e.airframe_icao\n          ? \"Press load airframe data to query api.airframes.io.\"\n          : \"This message does not include an airframe hex.\";\n        loadAirframeApiBtn.disabled = !e.airframe_icao;\n        detailOverlay.classList.add(\"open\");\n      }\n      function closeDetails() {\n        detailOverlay.classList.remove(\"open\");\n      }\n      async function loadAirframeApi(eventData = selectedEvent) {\n        const icao = eventData?.airframe_icao;\n        if (!icao) return;\n\n        airframeApiStatus.textContent = \"loading...\";\n        airframeApiJson.textContent = \"\";\n        loadAirframeApiBtn.disabled = true;\n\n        try {\n          const res = await fetch(\n            `/airframes/api/icao/${encodeURIComponent(icao)}`,\n            { cache: \"no-store\" },\n          );\n          const payload = await res.json();\n          if (!res.ok) {\n            throw new Error(payload.error || `${res.status} ${res.statusText}`);\n          }\n          airframeApiStatus.textContent = \"loaded\";\n          airframeApiJson.textContent = JSON.stringify(payload, null, 2);\n        } catch (err) {\n          airframeApiStatus.textContent = \"error\";\n          airframeApiJson.textContent = String(err.message || err);\n        } finally {\n          loadAirframeApiBtn.disabled = false;\n        }\n      }\n      function keyText(e) {\n        return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, e.text]\n          .join(\" \")\n          .toLowerCase();\n      }\n      function render() {\n        const q = qEl.value.trim().toLowerCase();\n        const mil = milEl.value;\n        const filtered = events.filter(\n          (e) =>\n            (!q || keyText(e).includes(q)) &&\n            (mil === \"all\" || String(e.military) === mil),\n        );\n        rowsEl.innerHTML = filtered\n          .map((e) => {\n            const index = events.indexOf(e);\n            return `<tr><td>${esc(shortTime(e.timestamp))}</td><td>${hexButton(e.airframe_icao, index)}</td><td>${esc(e.flight)}</td><td>${esc(e.tail)}</td><td>${esc(e.label)}</td><td class=\"text\">${esc(e.text)}</td><td><button class=\"detail-btn\" type=\"button\" data-index=\"${index}\">details</button></td></tr>`;\n          })\n          .join(\"\");\n        document.getElementById(\"last\").textContent = events[0]?.timestamp\n          ? events[0].timestamp.slice(11, 19)\n          : \"-\";\n      }\n      async function load() {\n        try {\n          const res = await fetch(\n            `/airframes/events?limit=${encodeURIComponent(limitEl.value)}`,\n            { cache: \"no-store\" },\n          );\n          if (!res.ok) throw new Error(res.status + \" \" + res.statusText);\n          events = await res.json();\n          document.getElementById(\"status\").textContent = \"live\";\n          render();\n        } catch (err) {\n          document.getElementById(\"status\").textContent = \"error\";\n          console.error(err);\n        }\n      }\n      function tick() {\n        document.getElementById(\"clock\").textContent =\n          \"UTC \" +\n          new Date().toISOString().replace(\"T\", \" \").slice(11, 19) +\n          \" \" +\n          new Date().toISOString().slice(0, 10);\n      }\n      qEl.addEventListener(\"input\", render);\n      milEl.addEventListener(\"change\", render);\n      limitEl.addEventListener(\"change\", load);\n      rowsEl.addEventListener(\"click\", (event) => {\n        const apiButton = event.target.closest(\".hex-btn\");\n        if (apiButton) {\n          const index = Number(apiButton.dataset.apiIndex);\n          openDetails(index);\n          loadAirframeApi(events[index]);\n          return;\n        }\n\n        const button = event.target.closest(\".detail-btn\");\n        if (!button) return;\n        openDetails(Number(button.dataset.index));\n      });\n      loadAirframeApiBtn.addEventListener(\"click\", () => loadAirframeApi());\n      detailOverlay.addEventListener(\"click\", (event) => {\n        if (event.target === detailOverlay) closeDetails();\n      });\n      document.addEventListener(\"keydown\", (event) => {\n        if (event.key === \"Escape\") closeDetails();\n      });\n      setInterval(load, 3000);\n      setInterval(tick, 1000);\n      tick();\n      load();\n    </script>\n  </body>\n</html>\n",
-    "output": "str",
-    "x": 430,
-    "y": 250,
-    "wires": [
-      [
-        "airframes-dashboard-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-dashboard-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Dashboard response",
-    "statusCode": "200",
-    "headers": {
-      "content-type": "text/html; charset=utf-8"
-    },
-    "x": 710,
-    "y": 250,
-    "wires": []
-  },
-  {
-    "id": "airframes-events-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes/events",
-    "url": "/airframes/events",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 150,
-    "y": 360,
-    "wires": [
-      [
-        "airframes-file-in"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-file-in",
-    "type": "file in",
-    "z": "airframes-tab",
-    "name": "Read JSONL",
-    "filename": "/mnt/ssl/acars",
-    "filenameType": "str",
-    "format": "utf8",
-    "chunk": false,
-    "sendError": true,
-    "encoding": "none",
-    "allProps": false,
-    "x": 360,
-    "y": 360,
-    "wires": [
-      [
-        "airframes-events-build"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-events-build",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Build events JSON",
-    "func": "function normalize(record) {\n    if (!record || typeof record !== \"object\") {\n        return null;\n    }\n\n    if (record.raw || record.received_at || record.airframe_icao) {\n        return record;\n    }\n\n    const flight = record.flight || {};\n    const airframe = record.airframe || {};\n    const station = record.station || {};\n\n    return {\n        received_at: record.received_at,\n        id: record.id,\n        timestamp: record.timestamp || record.created_at,\n        station: station.ident,\n        country: station.country_code,\n        flight: flight.flight_iata || flight.flight_icao || flight.flight,\n        airframe_icao: airframe.icao,\n        tail: airframe.tail || record.tail,\n        military: airframe.military,\n        source: record.source,\n        source_type: record.source_type,\n        frequency: record.frequency,\n        label: record.label,\n        mode: record.mode,\n        text: record.text,\n        raw: record\n    };\n}\n\nconst limit = Math.max(1, Math.min(parseInt(msg.req?.query?.limit || \"250\", 10) || 250, 2000));\nconst lines = String(msg.payload || \"\").split(/\\r?\\n/).filter(Boolean);\nconst stored = [];\n\nfor (let i = lines.length - 1; i >= 0 && stored.length < limit; i--) {\n    try {\n        const parsed = normalize(JSON.parse(lines[i]));\n        if (parsed) {\n            stored.push(parsed);\n        }\n    } catch (err) {\n        // Ignore old non-JSON lines.\n    }\n}\n\nconst recent = flow.get(\"airframes_recent\") || [];\nconst byId = new Map();\nfor (const event of [...recent, ...stored]) {\n    const key = event.id || `${event.timestamp}-${event.station}-${event.text}`;\n    if (!byId.has(key)) {\n        byId.set(key, event);\n    }\n}\n\nmsg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nmsg.payload = JSON.stringify([...byId.values()].slice(0, limit));\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 570,
-    "y": 360,
-    "wires": [
-      [
-        "airframes-events-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-events-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Events response",
-    "statusCode": "200",
-    "headers": {},
-    "x": 800,
-    "y": 360,
-    "wires": []
-  },
-  {
-    "id": "airframes-api-icao-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes/api/icao/:icao",
-    "url": "/airframes/api/icao/:icao",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 170,
-    "y": 470,
-    "wires": [
-      [
-        "airframes-api-icao-build"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-build",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Build airframes API request",
-    "func": "const icao = String(msg.req?.params?.icao || \"\").trim().toUpperCase();\n\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n    msg.statusCode = 400;\n    msg.headers = { \"content-type\": \"application/json; charset=utf-8\" };\n    msg.payload = { error: \"invalid_icao\", icao };\n    return [null, msg];\n}\n\nmsg.url = `https://api.airframes.io/airframes/icao/${encodeURIComponent(icao)}`;\nmsg.method = \"GET\";\nmsg.headers = { accept: \"application/json\" };\nreturn [msg, null];",
-    "outputs": 2,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 430,
-    "y": 470,
-    "wires": [
-      [
-        "airframes-api-icao-request"
-      ],
-      [
-        "airframes-api-icao-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-request",
-    "type": "http request",
-    "z": "airframes-tab",
-    "name": "api.airframes.io icao lookup",
-    "method": "use",
-    "ret": "obj",
-    "paytoqs": "ignore",
-    "url": "",
-    "tls": "",
-    "persist": false,
-    "proxy": "",
-    "insecureHTTPParser": false,
-    "authType": "",
-    "senderr": false,
-    "headers": [],
-    "x": 710,
-    "y": 450,
-    "wires": [
-      [
-        "airframes-api-icao-format"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-format",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Format airframes API response",
-    "func": "msg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\n\nif (msg.statusCode && msg.statusCode >= 400) {\n    msg.payload = {\n        error: \"airframes_api_error\",\n        statusCode: msg.statusCode,\n        response: msg.payload\n    };\n    return msg;\n}\n\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 980,
-    "y": 450,
-    "wires": [
-      [
-        "airframes-api-icao-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Airframe API response",
-    "statusCode": "",
-    "headers": {},
-    "x": 990,
-    "y": 500,
-    "wires": []
-  },
-  {
     "id": "airframes-libacars-exec",
     "type": "exec",
     "z": "airframes-tab",
@@ -354,7 +173,7 @@
     "type": "function",
     "z": "airframes-tab",
     "name": "Attach libacars decode",
-    "func": "const normalized = msg.normalized || {};\nconst meta = msg.libacars_meta || {};\nconst stdout = String(msg.payload || \"\").trim();\n\nif (!stdout) {\n    return [null, null];\n}\n\nfunction parseLibacarsOutput(output) {\n    try {\n        return JSON.parse(output);\n    } catch (err) {\n        // decode_acars_apps may echo the original message before JSON output.\n    }\n\n    const lines = output.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);\n    for (let index = lines.length - 1; index >= 0; index--) {\n        const line = lines[index];\n        if (!line.startsWith(\"{\") && !line.startsWith(\"[\")) {\n            continue;\n        }\n        try {\n            return JSON.parse(line);\n        } catch (err) {\n            // Keep scanning older lines.\n        }\n    }\n\n    return output;\n}\n\nconst decoded = parseLibacarsOutput(stdout);\nconst enriched = {\n    ...normalized,\n    libacars: {\n        ok: true,\n        label: meta.label,\n        direction: meta.direction,\n        decoded\n    }\n};\n\nlet recent = flow.get(\"airframes_recent\") || [];\nconst key = enriched.id || `${enriched.timestamp}-${enriched.station}-${enriched.text}`;\nrecent = recent.filter((event) => {\n    const eventKey = event.id || `${event.timestamp}-${event.station}-${event.text}`;\n    return eventKey !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nreturn [\n    { payload: enriched },\n    { payload: JSON.stringify(enriched) }\n];",
+    "func": "const normalized = msg.normalized || {};\nconst meta       = msg.libacars_meta || {};\nconst stdout     = String(msg.payload || \"\").trim();\n\nif (!stdout) return [null, null];\n\nfunction parseLibacarsOutput(output) {\n    try { return JSON.parse(output); } catch (err) {}\n    const lines = output.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\n    for (let i = lines.length - 1; i >= 0; i--) {\n        const line = lines[i];\n        if (!line.startsWith(\"{\") && !line.startsWith(\"[\")) continue;\n        try { return JSON.parse(line); } catch (err) {}\n    }\n    return output;\n}\n\nconst decoded = parseLibacarsOutput(stdout);\nconst enriched = {\n    ...normalized,\n    libacars: {\n        ok:        true,\n        label:     meta.label,\n        direction: meta.direction,\n        decoded,\n        decoder:   \"libacars\"\n    }\n};\n\nlet recent = flow.get(\"airframes_recent\") || [];\nconst key  = enriched.id || `${enriched.timestamp}-${enriched.station}-${enriched.text}`;\nrecent = recent.filter(e => {\n    const k = e.id || `${e.timestamp}-${e.station}-${e.text}`;\n    return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nreturn [\n    { payload: enriched },\n    { payload: JSON.stringify(enriched) }\n];",
     "outputs": 2,
     "timeout": 0,
     "noerr": 0,
@@ -377,7 +196,7 @@
     "type": "function",
     "z": "airframes-tab",
     "name": "Format libacars stderr",
-    "func": "const stderr = String(msg.payload || \"\").trim();\nif (!stderr) {\n    return null;\n}\nmsg.payload = {\n    libacars_error: stderr,\n    id: msg.normalized?.id,\n    label: msg.libacars_meta?.label,\n    direction: msg.libacars_meta?.direction\n};\nreturn msg;",
+    "func": "const stderr = String(msg.payload || \"\").trim();\nif (!stderr) return null;\nmsg.payload = {\n    libacars_error: stderr,\n    id:        msg.normalized?.id,\n    label:     msg.libacars_meta?.label,\n    direction: msg.libacars_meta?.direction\n};\nreturn msg;",
     "outputs": 1,
     "timeout": 0,
     "noerr": 0,
@@ -393,6 +212,218 @@
     ]
   },
   {
+    "id": "airframes-dashboard-in",
+    "type": "http in",
+    "z": "airframes-tab",
+    "name": "GET /airframes-dashboard",
+    "url": "/airframes-dashboard",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 160,
+    "y": 420,
+    "wires": [
+      [
+        "airframes-dashboard-template"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-dashboard-template",
+    "type": "template",
+    "z": "airframes-tab",
+    "name": "Dashboard HTML",
+    "field": "payload",
+    "fieldType": "msg",
+    "format": "handlebars",
+    "syntax": "mustache",
+    "template": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>airframes stream</title>\n    <style>\n      :root {\n        --bg: #0d1117;\n        --surface: #151b23;\n        --surface-2: #1b2430;\n        --surface-3: #202b38;\n        --row: #121922;\n        --row2: #16202b;\n        --head: #243140;\n        --line: #2b3747;\n        --text: #e7edf4;\n        --muted: #93a0ad;\n        --accent: #8fa9c8;\n        --accent-2: #c0a36b;\n        --danger: #a66565;\n        --shadow: 0 20px 50px rgba(0, 0, 0, 0.28);\n      }\n      * { box-sizing: border-box; }\n      body {\n        margin: 0;\n        background:\n          radial-gradient(circle at top left, rgba(143,169,200,0.08), transparent 32rem),\n          linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);\n        color: var(--text);\n        font: 15px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace;\n      }\n      .topbar {\n        height: 58px;\n        background: rgba(15,21,29,0.96);\n        display: flex;\n        align-items: center;\n        justify-content: space-between;\n        padding: 0 24px;\n        border-bottom: 1px solid var(--line);\n        white-space: nowrap;\n        overflow: hidden;\n        box-shadow: 0 1px 0 rgba(255,255,255,0.03);\n      }\n      .brand { display: flex; align-items: center; gap: 14px; color: #f2f5f8; font-size: 16px; font-weight: 650; letter-spacing: 0.02em; }\n      .menu {\n        width: 34px; height: 34px;\n        border: 1px solid var(--line);\n        border-radius: 10px;\n        display: inline-grid; place-items: center;\n        background: var(--surface); color: var(--accent);\n        font-size: 20px; line-height: 1; text-decoration: none;\n      }\n      .menu:hover, .menu:focus { background: rgba(143,169,200,0.12); outline: none; }\n      .clock { color: var(--muted); font-size: 14px; }\n      main { width: min(1560px, calc(100vw - 32px)); margin: 0 auto; padding: 22px 0 34px; }\n      h1 { margin: 0 0 16px; padding: 18px 20px; background: linear-gradient(135deg, rgba(21,27,35,0.96), rgba(27,36,48,0.9)); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); color: #f7f9fb; font-size: 19px; font-weight: 650; letter-spacing: 0.01em; }\n      .stats { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; margin: 0 0 12px; }\n      .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; min-width: 0; }\n      .stat b { display: block; color: #f4f7fa; font-size: 20px; font-weight: 650; }\n      .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }\n      .controls { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; padding: 12px; background: rgba(21,27,35,0.78); border: 1px solid var(--line); border-radius: 16px; }\n      .controls input, .controls select { background: #0f151d; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; }\n      .controls input:focus, .controls select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(143,169,200,0.12); }\n      .table-wrap { width: 100%; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }\n      table { width: 100%; border-collapse: collapse; min-width: 1040px; }\n      thead th { background: var(--head); color: #c9d4df; text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; position: sticky; top: 0; z-index: 2; }\n      tbody tr:nth-child(odd) { background: var(--row); }\n      tbody tr:nth-child(even) { background: var(--row2); }\n      td { padding: 10px 12px; border-bottom: 1px solid rgba(43,55,71,0.55); vertical-align: top; white-space: nowrap; }\n      td.text { white-space: normal; min-width: 320px; max-width: 520px; }\n      .detail-btn { background: transparent; color: var(--accent); border: 1px solid rgba(143,169,200,0.42); border-radius: 999px; padding: 4px 9px; font: inherit; font-size: 12px; cursor: pointer; }\n      .hex-btn { background: rgba(143,169,200,0.08); color: var(--accent); border: 1px solid rgba(143,169,200,0.35); border-radius: 8px; padding: 3px 7px; font: inherit; cursor: pointer; }\n      .hex-btn:disabled { cursor: default; opacity: 0.45; }\n      .detail-btn:hover, .detail-btn:focus, .hex-btn:hover, .hex-btn:focus { background: rgba(143,169,200,0.12); outline: none; }\n      a { color: var(--accent); }\n      .badge { color: #211807; background: var(--accent-2); padding: 2px 7px; border-radius: 999px; font-size: 12px; font-weight: 700; }\n      .badge.y { color: #fff; background: var(--danger); }\n      .badge.decoded { color: #fff; background: #3a6b3a; }\n      .muted { color: var(--muted); }\n      .detail-overlay { position: fixed; inset: 0; z-index: 10; display: none; background: rgba(4,7,11,0.62); backdrop-filter: blur(4px); }\n      .detail-overlay.open { display: block; }\n      .detail-panel { position: absolute; top: 0; right: 0; width: min(780px,100vw); height: 100%; overflow: auto; background: #101720; border-left: 1px solid var(--line); box-shadow: -24px 0 60px rgba(0,0,0,0.35); }\n      .detail-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px; background: rgba(16,23,32,0.96); border-bottom: 1px solid var(--line); }\n      .detail-title { margin: 0; color: #f7f9fb; font-size: 18px; }\n      .detail-subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }\n      .close-btn { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }\n      .detail-body { padding: 18px 20px 28px; }\n      .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }\n      .detail-field { min-width: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }\n      .detail-field span { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }\n      .detail-field b { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--text); font-weight: 600; }\n      .detail-section { margin-top: 16px; }\n      .detail-section h3 { margin: 0 0 8px; color: #f2f5f8; font-size: 14px; letter-spacing: 0.05em; text-transform: uppercase; }\n      .tabs { display: flex; gap: 6px; margin-bottom: 8px; }\n      .tab-btn { background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer; }\n      .tab-btn.active { background: rgba(143,169,200,0.14); color: var(--accent); border-color: var(--accent); }\n      .tab-btn:hover { background: rgba(143,169,200,0.10); }\n      .message-text, .json-view { margin: 0; padding: 14px; overflow: auto; background: #0b1017; border: 1px solid var(--line); border-radius: 12px; color: #dce6ef; white-space: pre-wrap; }\n      .json-view { max-height: 42vh; font-size: 12px; }\n      .api-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }\n      .api-status { color: var(--muted); font-size: 12px; }\n      .decoder-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; margin-left: 6px; }\n      .decoder-badge.acars { background: #1e3a5f; color: #8fa9c8; border: 1px solid #2a4f7a; }\n      .decoder-badge.libacars { background: #3a3020; color: #c0a36b; border: 1px solid #5a4a30; }\n      @media (max-width: 900px) {\n        main { width: min(100vw - 20px, 1560px); padding: 12px 0 20px; }\n        .topbar { height: 54px; padding: 0 12px; }\n        .clock { display: none; }\n        table { min-width: 900px; font-size: 13px; }\n        .stats { grid-template-columns: repeat(2, minmax(130px, 1fr)); }\n        .detail-grid { grid-template-columns: 1fr; }\n      }\n    </style>\n  </head>\n  <body>\n    <header class=\"topbar\">\n      <div class=\"brand\">\n        <a class=\"menu\" href=\"/airframes-stats\" title=\"Open stats\">=</a>\n        <span>airframes - stream</span>\n      </div>\n      <div class=\"clock\" id=\"clock\"></div>\n    </header>\n    <main>\n      <h1>airframes - live and stored feed</h1>\n      <section class=\"stats\">\n        <div class=\"stat\"><b id=\"last\">-</b><span>latest UTC</span></div>\n        <div class=\"stat\"><b id=\"status\">loading</b><span>status</span></div>\n        <div class=\"stat\"><b id=\"decodedCount\">-</b><span>decoded (session)</span></div>\n        <div class=\"stat\"><b id=\"libacarsCount\">-</b><span>libacars decoded</span></div>\n      </section>\n      <section class=\"controls\">\n        <input id=\"q\" placeholder=\"filter icao, tail, text...\" size=\"42\" />\n        <select id=\"mil\">\n          <option value=\"all\">all</option>\n          <option value=\"true\">military only</option>\n          <option value=\"false\">non-military</option>\n        </select>\n        <select id=\"decoded\">\n          <option value=\"all\">all messages</option>\n          <option value=\"acars\">acars-decoded only</option>\n          <option value=\"libacars\">libacars only</option>\n          <option value=\"any\">any decoded</option>\n        </select>\n        <select id=\"limit\">\n          <option>100</option>\n          <option selected>250</option>\n          <option>500</option>\n          <option>1000</option>\n        </select>\n      </section>\n      <div class=\"table-wrap\">\n        <table>\n          <thead>\n            <tr>\n              <th>time</th>\n              <th>icao</th>\n              <th>call(s)</th>\n              <th>tail</th>\n              <th>label</th>\n              <th>decoded</th>\n              <th>text</th>\n              <th>details</th>\n            </tr>\n          </thead>\n          <tbody id=\"rows\"></tbody>\n        </table>\n      </div>\n    </main>\n    <div class=\"detail-overlay\" id=\"detailOverlay\" aria-hidden=\"true\">\n      <aside class=\"detail-panel\" aria-label=\"message details\">\n        <header class=\"detail-head\">\n          <div>\n            <h2 class=\"detail-title\" id=\"detailTitle\">message</h2>\n            <p class=\"detail-subtitle\" id=\"detailSubtitle\"></p>\n          </div>\n          <button class=\"close-btn\" type=\"button\" onclick=\"closeDetails()\">x</button>\n        </header>\n        <div class=\"detail-body\">\n          <section class=\"detail-grid\" id=\"detailGrid\"></section>\n          <section class=\"detail-section\">\n            <h3>message text</h3>\n            <pre class=\"message-text\" id=\"detailText\"></pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>acars-decoder-typescript\n              <span class=\"decoder-badge acars\">TS</span>\n            </h3>\n            <span class=\"api-status\" id=\"acarsDecoderStatus\">not decoded</span>\n            <pre class=\"json-view\" id=\"acarsDecoderJson\">No acars-decoder result for this message.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>libacars decode\n              <span class=\"decoder-badge libacars\">C</span>\n            </h3>\n            <span class=\"api-status\" id=\"libacarsStatus\">not decoded</span>\n            <pre class=\"json-view\" id=\"libacarsJson\">No libacars decode available for this message.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>airframe api</h3>\n            <div class=\"api-actions\">\n              <button class=\"detail-btn\" type=\"button\" id=\"loadAirframeApi\">load airframe data</button>\n              <span class=\"api-status\" id=\"airframeApiStatus\">not loaded</span>\n            </div>\n            <pre class=\"json-view\" id=\"airframeApiJson\">Press load airframe data to query api.airframes.io.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>raw json</h3>\n            <pre class=\"json-view\" id=\"detailJson\"></pre>\n          </section>\n        </div>\n      </aside>\n    </div>\n    <script>\n      const rowsEl          = document.getElementById('rows');\n      const qEl             = document.getElementById('q');\n      const milEl           = document.getElementById('mil');\n      const limitEl         = document.getElementById('limit');\n      const decodedFilterEl = document.getElementById('decoded');\n      const detailOverlay   = document.getElementById('detailOverlay');\n      const detailTitle     = document.getElementById('detailTitle');\n      const detailSubtitle  = document.getElementById('detailSubtitle');\n      const detailGrid      = document.getElementById('detailGrid');\n      const detailText      = document.getElementById('detailText');\n      const detailJson      = document.getElementById('detailJson');\n      const libacarsStatus  = document.getElementById('libacarsStatus');\n      const libacarsJson    = document.getElementById('libacarsJson');\n      const acarsDecoderStatus = document.getElementById('acarsDecoderStatus');\n      const acarsDecoderJson   = document.getElementById('acarsDecoderJson');\n      const loadAirframeApiBtn = document.getElementById('loadAirframeApi');\n      const airframeApiStatus  = document.getElementById('airframeApiStatus');\n      const airframeApiJson    = document.getElementById('airframeApiJson');\n\n      let events = [];\n      let selectedEvent = null;\n\n      function esc(v) {\n        return String(v ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\n      }\n      function shortTime(v) { return String(v || '').replace('Z','Z'); }\n      function yesNo(v) {\n        return v === true ? '<span class=\"badge y\">Y</span>'\n             : v === false ? '<span class=\"badge\">N</span>' : '';\n      }\n      function formatValue(v) {\n        if (v === null || v === undefined || v === '') return '-';\n        return String(v);\n      }\n      function detailField(label, value) {\n        return `<div class=\"detail-field\"><span>${esc(label)}</span><b>${esc(formatValue(value))}</b></div>`;\n      }\n      function eventTitle(e) {\n        return e.flight || e.tail || e.airframe_icao || e.id || 'message';\n      }\n      function hexButton(icao, index) {\n        if (!icao) return '';\n        return `<button class=\"hex-btn\" type=\"button\" data-api-index=\"${index}\" title=\"Load airframes API data\">${esc(icao)}</button>`;\n      }\n      function decodedBadge(e) {\n        const parts = [];\n        if (e.acars_decoded?.ok)  parts.push('<span class=\"badge decoded\" title=\"acars-decoder-typescript\">TS</span>');\n        if (e.libacars?.ok)       parts.push('<span class=\"badge\" style=\"background:#5a4a30;color:#c0a36b\" title=\"libacars\">LA</span>');\n        return parts.join(' ');\n      }\n\n      function openDetails(index) {\n        const e = events[index];\n        if (!e) return;\n        selectedEvent = e;\n        const raw = e.raw || e;\n\n        detailTitle.textContent    = eventTitle(e);\n        detailSubtitle.textContent = `${formatValue(e.timestamp)} · ${formatValue(e.station)} · ${formatValue(e.source || e.source_type)}`;\n\n        detailGrid.innerHTML = [\n          detailField('id',           e.id),\n          detailField('timestamp',    e.timestamp),\n          detailField('received',     e.received_at),\n          detailField('station',      e.station),\n          detailField('country',      e.country),\n          detailField('flight',       e.flight),\n          detailField('icao',         e.airframe_icao),\n          detailField('tail',         e.tail),\n          detailField('military',     e.military),\n          detailField('source',       e.source),\n          detailField('source type',  e.source_type),\n          detailField('frequency',    e.frequency),\n          detailField('label',        e.label),\n          detailField('mode',         e.mode),\n          detailField('acars-decoder', e.acars_decoded?.ok ? 'decoded (TS)' : 'not decoded'),\n          detailField('libacars',      e.libacars?.ok      ? 'decoded (LA)' : 'not decoded'),\n        ].join('');\n\n        detailText.textContent = formatValue(e.text);\n\n        // acars-decoder-typescript section\n        acarsDecoderStatus.textContent = e.acars_decoded?.ok ? 'decoded' : 'not decoded';\n        acarsDecoderJson.textContent   = e.acars_decoded\n          ? JSON.stringify(e.acars_decoded, null, 2)\n          : 'No acars-decoder result for this message.';\n\n        // libacars section\n        libacarsStatus.textContent = e.libacars?.ok ? 'decoded' : 'not decoded';\n        libacarsJson.textContent   = e.libacars\n          ? JSON.stringify(e.libacars, null, 2)\n          : 'No libacars decode available for this message.';\n\n        detailJson.textContent = JSON.stringify(raw, null, 2);\n\n        airframeApiStatus.textContent = e.airframe_icao ? 'not loaded' : 'no hex available';\n        airframeApiJson.textContent   = e.airframe_icao\n          ? 'Press load airframe data to query api.airframes.io.'\n          : 'This message does not include an airframe hex.';\n        loadAirframeApiBtn.disabled = !e.airframe_icao;\n\n        detailOverlay.classList.add('open');\n        detailOverlay.removeAttribute('aria-hidden');\n      }\n\n      function closeDetails() {\n        detailOverlay.classList.remove('open');\n        detailOverlay.setAttribute('aria-hidden', 'true');\n      }\n\n      async function loadAirframeApi(eventData = selectedEvent) {\n        const icao = eventData?.airframe_icao;\n        if (!icao) return;\n        airframeApiStatus.textContent = 'loading...';\n        airframeApiJson.textContent   = '';\n        loadAirframeApiBtn.disabled   = true;\n        try {\n          const res     = await fetch(`/airframes/api/icao/${encodeURIComponent(icao)}`, { cache: 'no-store' });\n          const payload = await res.json();\n          if (!res.ok) throw new Error(payload.error || `${res.status} ${res.statusText}`);\n          airframeApiStatus.textContent = 'loaded';\n          airframeApiJson.textContent   = JSON.stringify(payload, null, 2);\n        } catch (err) {\n          airframeApiStatus.textContent = 'error';\n          airframeApiJson.textContent   = String(err.message || err);\n        } finally {\n          loadAirframeApiBtn.disabled = false;\n        }\n      }\n\n      function keyText(e) {\n        return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, e.text].join(' ').toLowerCase();\n      }\n\n      function render() {\n        const q   = qEl.value.trim().toLowerCase();\n        const mil = milEl.value;\n        const df  = decodedFilterEl.value;\n\n        const filtered = events.filter(e => {\n          if (q   && !keyText(e).includes(q))          return false;\n          if (mil !== 'all' && String(e.military) !== mil) return false;\n          if (df === 'acars'    && !e.acars_decoded?.ok)    return false;\n          if (df === 'libacars' && !e.libacars?.ok)         return false;\n          if (df === 'any'      && !e.acars_decoded?.ok && !e.libacars?.ok) return false;\n          return true;\n        });\n\n        rowsEl.innerHTML = filtered.map(e => {\n          const index = events.indexOf(e);\n          return `<tr>\n            <td>${esc(shortTime(e.timestamp))}</td>\n            <td>${hexButton(e.airframe_icao, index)}</td>\n            <td>${esc(e.flight)}</td>\n            <td>${esc(e.tail)}</td>\n            <td>${esc(e.label)}</td>\n            <td>${decodedBadge(e)}</td>\n            <td class=\"text\">${esc(e.text)}</td>\n            <td><button class=\"detail-btn\" type=\"button\" data-index=\"${index}\">details</button></td>\n          </tr>`;\n        }).join('');\n\n        document.getElementById('last').textContent   = events[0]?.timestamp ? events[0].timestamp.slice(11,19) : '-';\n        document.getElementById('decodedCount').textContent = events.filter(e => e.acars_decoded?.ok).length;\n        document.getElementById('libacarsCount').textContent = events.filter(e => e.libacars?.ok).length;\n      }\n\n      async function load() {\n        try {\n          const res = await fetch(`/airframes/events?limit=${encodeURIComponent(limitEl.value)}`, { cache: 'no-store' });\n          if (!res.ok) throw new Error(res.status + ' ' + res.statusText);\n          events = await res.json();\n          document.getElementById('status').textContent = 'live';\n          render();\n        } catch (err) {\n          document.getElementById('status').textContent = 'error';\n          console.error(err);\n        }\n      }\n\n      function tick() {\n        document.getElementById('clock').textContent =\n          'UTC ' + new Date().toISOString().replace('T',' ').slice(11,19) + ' ' + new Date().toISOString().slice(0,10);\n      }\n\n      qEl.addEventListener('input', render);\n      milEl.addEventListener('change', render);\n      decodedFilterEl.addEventListener('change', render);\n      limitEl.addEventListener('change', load);\n\n      rowsEl.addEventListener('click', event => {\n        const apiBtn = event.target.closest('.hex-btn');\n        if (apiBtn) {\n          const index = Number(apiBtn.dataset.apiIndex);\n          openDetails(index);\n          loadAirframeApi(events[index]);\n          return;\n        }\n        const btn = event.target.closest('.detail-btn');\n        if (!btn) return;\n        openDetails(Number(btn.dataset.index));\n      });\n\n      loadAirframeApiBtn.addEventListener('click', () => loadAirframeApi());\n      detailOverlay.addEventListener('click', event => { if (event.target === detailOverlay) closeDetails(); });\n      document.addEventListener('keydown', event => { if (event.key === 'Escape') closeDetails(); });\n\n      setInterval(load, 3000);\n      setInterval(tick, 1000);\n      tick();\n      load();\n    </script>\n  </body>\n</html>",
+    "output": "str",
+    "x": 430,
+    "y": 420,
+    "wires": [
+      [
+        "airframes-dashboard-response"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-dashboard-response",
+    "type": "http response",
+    "z": "airframes-tab",
+    "name": "Dashboard response",
+    "statusCode": "200",
+    "headers": {
+      "content-type": "text/html; charset=utf-8"
+    },
+    "x": 710,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "airframes-events-in",
+    "type": "http in",
+    "z": "airframes-tab",
+    "name": "GET /airframes/events",
+    "url": "/airframes/events",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 530,
+    "wires": [
+      [
+        "airframes-file-in"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-file-in",
+    "type": "file in",
+    "z": "airframes-tab",
+    "name": "Read JSONL",
+    "filename": "/mnt/ssl/acars",
+    "filenameType": "str",
+    "format": "utf8",
+    "chunk": false,
+    "sendError": true,
+    "encoding": "none",
+    "allProps": false,
+    "x": 360,
+    "y": 530,
+    "wires": [
+      [
+        "airframes-events-build"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-events-build",
+    "type": "function",
+    "z": "airframes-tab",
+    "name": "Build events JSON",
+    "func": "function normalize(record) {\n    if (!record || typeof record !== \"object\") return null;\n    if (record.raw || record.received_at || record.airframe_icao) return record;\n    const flight   = record.flight   || {};\n    const airframe = record.airframe || {};\n    const station  = record.station  || {};\n    return {\n        received_at:   record.received_at,\n        id:            record.id,\n        timestamp:     record.timestamp || record.created_at,\n        station:       station.ident,\n        country:       station.country_code,\n        flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n        airframe_icao: airframe.icao,\n        tail:          airframe.tail || record.tail,\n        military:      airframe.military,\n        source:        record.source,\n        source_type:   record.source_type,\n        frequency:     record.frequency,\n        label:         record.label,\n        mode:          record.mode,\n        text:          record.text,\n        raw:           record\n    };\n}\n\nconst limit  = Math.max(1, Math.min(parseInt(msg.req?.query?.limit || \"250\", 10) || 250, 2000));\nconst lines  = String(msg.payload || \"\").split(/\\r?\\n/).filter(Boolean);\nconst stored = [];\n\nfor (let i = lines.length - 1; i >= 0 && stored.length < limit; i--) {\n    try {\n        const parsed = normalize(JSON.parse(lines[i]));\n        if (parsed) stored.push(parsed);\n    } catch (err) { /* ignore non-JSON lines */ }\n}\n\nconst recent = flow.get(\"airframes_recent\") || [];\nconst byId   = new Map();\nfor (const event of [...recent, ...stored]) {\n    const key = event.id || `${event.timestamp}-${event.station}-${event.text}`;\n    if (!byId.has(key)) byId.set(key, event);\n}\n\nmsg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nmsg.payload = JSON.stringify([...byId.values()].slice(0, limit));\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 570,
+    "y": 530,
+    "wires": [
+      [
+        "airframes-events-response"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-events-response",
+    "type": "http response",
+    "z": "airframes-tab",
+    "name": "Events response",
+    "statusCode": "200",
+    "headers": {},
+    "x": 800,
+    "y": 530,
+    "wires": []
+  },
+  {
+    "id": "airframes-api-icao-in",
+    "type": "http in",
+    "z": "airframes-tab",
+    "name": "GET /airframes/api/icao/:icao",
+    "url": "/airframes/api/icao/:icao",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 170,
+    "y": 630,
+    "wires": [
+      [
+        "airframes-api-icao-build"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-api-icao-build",
+    "type": "function",
+    "z": "airframes-tab",
+    "name": "Build airframes API request",
+    "func": "const icao = String(msg.req?.params?.icao || \"\").trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n    msg.statusCode = 400;\n    msg.headers    = { \"content-type\": \"application/json; charset=utf-8\" };\n    msg.payload    = { error: \"invalid_icao\", icao };\n    return [null, msg];\n}\nmsg.url     = `https://api.airframes.io/airframes/icao/${encodeURIComponent(icao)}`;\nmsg.method  = \"GET\";\nmsg.headers = { accept: \"application/json\" };\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 630,
+    "wires": [
+      [
+        "airframes-api-icao-request"
+      ],
+      [
+        "airframes-api-icao-response"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-api-icao-request",
+    "type": "http request",
+    "z": "airframes-tab",
+    "name": "api.airframes.io icao lookup",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 710,
+    "y": 615,
+    "wires": [
+      [
+        "airframes-api-icao-format"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-api-icao-format",
+    "type": "function",
+    "z": "airframes-tab",
+    "name": "Format airframes API response",
+    "func": "msg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nif (msg.statusCode && msg.statusCode >= 400) {\n    msg.payload = { error: \"airframes_api_error\", statusCode: msg.statusCode, response: msg.payload };\n    return msg;\n}\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 980,
+    "y": 615,
+    "wires": [
+      [
+        "airframes-api-icao-response"
+      ]
+    ]
+  },
+  {
+    "id": "airframes-api-icao-response",
+    "type": "http response",
+    "z": "airframes-tab",
+    "name": "Airframe API response",
+    "statusCode": "",
+    "headers": {},
+    "x": 990,
+    "y": 660,
+    "wires": []
+  },
+  {
     "id": "airframes-stats-in",
     "type": "http in",
     "z": "airframes-tab",
@@ -402,7 +433,7 @@
     "upload": false,
     "swaggerDoc": "",
     "x": 140,
-    "y": 580,
+    "y": 760,
     "wires": [
       [
         "airframes-stats-file-in"
@@ -419,7 +450,7 @@
     "upload": false,
     "swaggerDoc": "",
     "x": 160,
-    "y": 630,
+    "y": 810,
     "wires": [
       [
         "airframes-stats-file-in"
@@ -439,7 +470,7 @@
     "encoding": "none",
     "allProps": false,
     "x": 410,
-    "y": 605,
+    "y": 785,
     "wires": [
       [
         "airframes-stats-build"
@@ -451,7 +482,7 @@
     "type": "function",
     "z": "airframes-tab",
     "name": "Build ACARS stats",
-    "func": "const content = String(msg.payload || \"\");\nconst lines = content.split(/\\r?\\n/).filter((line) => line.trim().length > 0);\nlet validJson = 0;\nlet invalidJson = 0;\nconst byLabel = {};\nconst bySource = {};\nlet latestTimestamp = null;\nlet earliestTimestamp = null;\n\nfor (const line of lines) {\n    try {\n        const event = JSON.parse(line);\n        validJson += 1;\n\n        const label = event.label || event.raw?.label || \"unknown\";\n        const source = event.source || event.raw?.source || \"unknown\";\n        const timestamp = event.timestamp || event.raw?.timestamp;\n\n        byLabel[label] = (byLabel[label] || 0) + 1;\n        bySource[source] = (bySource[source] || 0) + 1;\n\n        if (timestamp) {\n            if (!latestTimestamp || timestamp > latestTimestamp) {\n                latestTimestamp = timestamp;\n            }\n            if (!earliestTimestamp || timestamp < earliestTimestamp) {\n                earliestTimestamp = timestamp;\n            }\n        }\n    } catch (err) {\n        invalidJson += 1;\n    }\n}\n\nmsg.headers = {\n    \"content-type\": \"application/json; charset=utf-8\",\n    \"cache-control\": \"no-store\"\n};\nmsg.payload = JSON.stringify({\n    file: \"/mnt/ssl/acars\",\n    messages: lines.length,\n    valid_json: validJson,\n    invalid_json: invalidJson,\n    earliest_timestamp: earliestTimestamp,\n    latest_timestamp: latestTimestamp,\n    by_label: byLabel,\n    by_source: bySource\n});\nreturn msg;",
+    "func": "const content = String(msg.payload || \"\");\nconst lines   = content.split(/\\r?\\n/).filter(l => l.trim().length > 0);\nlet validJson = 0, invalidJson = 0;\nlet acarsDecodedCount = 0, libacarsDecodedCount = 0;\nconst byLabel = {}, bySource = {};\nlet latestTimestamp = null, earliestTimestamp = null;\n\nfor (const line of lines) {\n    try {\n        const event     = JSON.parse(line);\n        const label     = event.label     || event.raw?.label     || \"unknown\";\n        const source    = event.source    || event.raw?.source    || \"unknown\";\n        const timestamp = event.timestamp || event.raw?.timestamp;\n        validJson += 1;\n        if (event.acars_decoded?.ok) acarsDecodedCount += 1;\n        if (event.libacars?.ok)      libacarsDecodedCount += 1;\n        byLabel[label]   = (byLabel[label]   || 0) + 1;\n        bySource[source] = (bySource[source] || 0) + 1;\n        if (timestamp) {\n            if (!latestTimestamp   || timestamp > latestTimestamp)   latestTimestamp   = timestamp;\n            if (!earliestTimestamp || timestamp < earliestTimestamp) earliestTimestamp = timestamp;\n        }\n    } catch (err) {\n        invalidJson += 1;\n    }\n}\n\nmsg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nmsg.payload = JSON.stringify({\n    file:                   \"/mnt/ssl/acars\",\n    messages:               lines.length,\n    valid_json:             validJson,\n    invalid_json:           invalidJson,\n    acars_decoded_count:    acarsDecodedCount,\n    libacars_decoded_count: libacarsDecodedCount,\n    earliest_timestamp:     earliestTimestamp,\n    latest_timestamp:       latestTimestamp,\n    by_label:               byLabel,\n    by_source:              bySource\n});\nreturn msg;",
     "outputs": 1,
     "timeout": 0,
     "noerr": 0,
@@ -459,7 +490,7 @@
     "finalize": "",
     "libs": [],
     "x": 640,
-    "y": 605,
+    "y": 785,
     "wires": [
       [
         "airframes-stats-response"
@@ -474,7 +505,7 @@
     "statusCode": "200",
     "headers": {},
     "x": 850,
-    "y": 605,
+    "y": 785,
     "wires": []
   },
   {
@@ -487,7 +518,7 @@
     "upload": false,
     "swaggerDoc": "",
     "x": 140,
-    "y": 700,
+    "y": 880,
     "wires": [
       [
         "airframes-stats-page-template"
@@ -503,10 +534,10 @@
     "fieldType": "msg",
     "format": "handlebars",
     "syntax": "mustache",
-    "template": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>airframes stats</title>\n    <style>\n      :root {\n        --bg: #0d1117;\n        --surface: #151b23;\n        --surface-2: #1b2430;\n        --head: #243140;\n        --line: #2b3747;\n        --text: #e7edf4;\n        --muted: #93a0ad;\n        --accent: #8fa9c8;\n        --warn: #c0a36b;\n        --shadow: 0 20px 50px rgba(0, 0, 0, 0.28);\n      }\n      * { box-sizing: border-box; }\n      body {\n        margin: 0;\n        min-height: 100vh;\n        background:\n          radial-gradient(circle at top left, rgba(143, 169, 200, 0.08), transparent 32rem),\n          linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);\n        color: var(--text);\n        font: 15px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace;\n      }\n      .topbar {\n        height: 58px;\n        background: rgba(15, 21, 29, 0.96);\n        display: flex;\n        align-items: center;\n        justify-content: space-between;\n        padding: 0 24px;\n        border-bottom: 1px solid var(--line);\n      }\n      .brand { display: flex; align-items: center; gap: 14px; font-size: 16px; font-weight: 650; letter-spacing: 0.02em; }\n      .menu {\n        width: 34px;\n        height: 34px;\n        border: 1px solid var(--line);\n        border-radius: 10px;\n        display: inline-grid;\n        place-items: center;\n        background: var(--surface);\n        color: var(--accent);\n        text-decoration: none;\n        font-size: 18px;\n      }\n      .menu:hover, .menu:focus { background: rgba(143, 169, 200, 0.12); outline: none; }\n      .clock { color: var(--muted); font-size: 14px; }\n      main { width: min(1320px, calc(100vw - 32px)); margin: 0 auto; padding: 22px 0 34px; }\n      .hero {\n        margin-bottom: 16px;\n        padding: 18px 20px;\n        background: linear-gradient(135deg, rgba(21, 27, 35, 0.96), rgba(27, 36, 48, 0.9));\n        border: 1px solid var(--line);\n        border-radius: 18px;\n        box-shadow: var(--shadow);\n      }\n      h1 { margin: 0; font-size: 20px; font-weight: 650; }\n      .sub { margin: 6px 0 0; color: var(--muted); }\n      .grid { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin-bottom: 14px; }\n      .card {\n        min-width: 0;\n        padding: 14px;\n        background: var(--surface);\n        border: 1px solid var(--line);\n        border-radius: 16px;\n      }\n      .card span { display: block; color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }\n      .card b { display: block; margin-top: 6px; color: #f4f7fa; font-size: 22px; font-weight: 650; overflow-wrap: anywhere; }\n      .panel {\n        background: var(--surface);\n        border: 1px solid var(--line);\n        border-radius: 18px;\n        box-shadow: var(--shadow);\n        overflow: hidden;\n        margin-top: 14px;\n      }\n      .panel h2 { margin: 0; padding: 13px 15px; background: var(--head); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }\n      table { width: 100%; border-collapse: collapse; }\n      th, td { padding: 10px 14px; border-bottom: 1px solid rgba(43, 55, 71, 0.55); text-align: left; }\n      th { color: #c9d4df; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }\n      td:last-child, th:last-child { text-align: right; }\n      .status { color: var(--muted); }\n      .error { color: var(--warn); }\n      @media (max-width: 900px) { main { width: min(100vw - 20px, 1320px); padding: 12px 0 20px; } .grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); } .clock { display: none; } }\n    </style>\n  </head>\n  <body>\n    <header class=\"topbar\">\n      <div class=\"brand\"><a class=\"menu\" href=\"/airframes-dashboard\" title=\"Back to dashboard\">←</a><span>airframes - stats</span></div>\n      <div class=\"clock\" id=\"clock\"></div>\n    </header>\n    <main>\n      <section class=\"hero\">\n        <h1>stored ACARS message stats</h1>\n        <p class=\"sub\">Counts are calculated from /mnt/ssl/acars. Refreshes every 10 seconds.</p>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>messages</span><b id=\"messages\">-</b></div>\n        <div class=\"card\"><span>valid json</span><b id=\"validJson\">-</b></div>\n        <div class=\"card\"><span>invalid json</span><b id=\"invalidJson\">-</b></div>\n        <div class=\"card\"><span>status</span><b id=\"status\">loading</b></div>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>earliest</span><b id=\"earliest\">-</b></div>\n        <div class=\"card\"><span>latest</span><b id=\"latest\">-</b></div>\n        <div class=\"card\"><span>labels</span><b id=\"labelCount\">-</b></div>\n        <div class=\"card\"><span>sources</span><b id=\"sourceCount\">-</b></div>\n      </section>\n      <section class=\"panel\"><h2>by label</h2><table><thead><tr><th>label</th><th>messages</th></tr></thead><tbody id=\"labelRows\"></tbody></table></section>\n      <section class=\"panel\"><h2>by source</h2><table><thead><tr><th>source</th><th>messages</th></tr></thead><tbody id=\"sourceRows\"></tbody></table></section>\n      <p class=\"status\" id=\"updated\"></p>\n    </main>\n    <script>\n      const fmt = new Intl.NumberFormat();\n      function esc(v) { return String(v ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c])); }\n      function setText(id, value) { document.getElementById(id).textContent = value ?? '-'; }\n      function rowsFromObject(obj) {\n        return Object.entries(obj || {})\n          .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))\n          .map(([key, count]) => `<tr><td>${esc(key)}</td><td>${fmt.format(count)}</td></tr>`)\n          .join('');\n      }\n      async function loadStats() {\n        try {\n          const res = await fetch('/airframes/stats', { cache: 'no-store' });\n          if (!res.ok) throw new Error(res.status + ' ' + res.statusText);\n          const stats = await res.json();\n          setText('messages', fmt.format(stats.messages));\n          setText('validJson', fmt.format(stats.valid_json));\n          setText('invalidJson', fmt.format(stats.invalid_json));\n          setText('earliest', stats.earliest_timestamp || '-');\n          setText('latest', stats.latest_timestamp || '-');\n          setText('labelCount', Object.keys(stats.by_label || {}).length);\n          setText('sourceCount', Object.keys(stats.by_source || {}).length);\n          document.getElementById('labelRows').innerHTML = rowsFromObject(stats.by_label);\n          document.getElementById('sourceRows').innerHTML = rowsFromObject(stats.by_source);\n          setText('status', 'live');\n          document.getElementById('status').className = '';\n          document.getElementById('updated').textContent = 'updated ' + new Date().toISOString();\n        } catch (err) {\n          setText('status', 'error');\n          document.getElementById('status').className = 'error';\n          document.getElementById('updated').textContent = String(err.message || err);\n        }\n      }\n      function tick() { document.getElementById('clock').textContent = 'UTC ' + new Date().toISOString().replace('T',' ').slice(11,19) + ' ' + new Date().toISOString().slice(0,10); }\n      setInterval(loadStats, 10000);\n      setInterval(tick, 1000);\n      tick();\n      loadStats();\n    </script>\n  </body>\n</html>",
+    "template": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>airframes stats</title>\n    <style>\n      :root { --bg:#0d1117;--surface:#151b23;--head:#243140;--line:#2b3747;--text:#e7edf4;--muted:#93a0ad;--accent:#8fa9c8;--warn:#c0a36b;--shadow:0 20px 50px rgba(0,0,0,0.28); }\n      *{box-sizing:border-box}\n      body{margin:0;min-height:100vh;background:radial-gradient(circle at top left,rgba(143,169,200,0.08),transparent 32rem),linear-gradient(180deg,#0d1117 0%,#0a0d12 100%);color:var(--text);font:15px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,\"Liberation Mono\",monospace}\n      .topbar{height:58px;background:rgba(15,21,29,0.96);display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--line)}\n      .brand{display:flex;align-items:center;gap:14px;font-size:16px;font-weight:650;letter-spacing:0.02em}\n      .menu{width:34px;height:34px;border:1px solid var(--line);border-radius:10px;display:inline-grid;place-items:center;background:var(--surface);color:var(--accent);text-decoration:none;font-size:18px}\n      .menu:hover,.menu:focus{background:rgba(143,169,200,0.12);outline:none}\n      .clock{color:var(--muted);font-size:14px}\n      main{width:min(1320px,calc(100vw - 32px));margin:0 auto;padding:22px 0 34px}\n      .hero{margin-bottom:16px;padding:18px 20px;background:linear-gradient(135deg,rgba(21,27,35,0.96),rgba(27,36,48,0.9));border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}\n      h1{margin:0;font-size:20px;font-weight:650}\n      .sub{margin:6px 0 0;color:var(--muted)}\n      .grid{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:14px}\n      .card{min-width:0;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:16px}\n      .card span{display:block;color:var(--muted);font-size:12px;letter-spacing:0.08em;text-transform:uppercase}\n      .card b{display:block;margin-top:6px;color:#f4f7fa;font-size:22px;font-weight:650;overflow-wrap:anywhere}\n      .panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden;margin-top:14px}\n      .panel h2{margin:0;padding:13px 15px;background:var(--head);font-size:14px;letter-spacing:0.06em;text-transform:uppercase}\n      table{width:100%;border-collapse:collapse}\n      th,td{padding:10px 14px;border-bottom:1px solid rgba(43,55,71,0.55);text-align:left}\n      th{color:#c9d4df;font-size:12px;text-transform:uppercase;letter-spacing:0.06em}\n      td:last-child,th:last-child{text-align:right}\n      .status{color:var(--muted)}.error{color:var(--warn)}\n      @media(max-width:900px){main{width:min(100vw - 20px,1320px);padding:12px 0 20px}.grid{grid-template-columns:repeat(2,minmax(130px,1fr))}.clock{display:none}}\n    </style>\n  </head>\n  <body>\n    <header class=\"topbar\">\n      <div class=\"brand\"><a class=\"menu\" href=\"/airframes-dashboard\" title=\"Back to dashboard\">←</a><span>airframes - stats</span></div>\n      <div class=\"clock\" id=\"clock\"></div>\n    </header>\n    <main>\n      <section class=\"hero\">\n        <h1>stored ACARS message stats</h1>\n        <p class=\"sub\">Counts from /mnt/ssl/acars. Refreshes every 10 s.</p>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>messages</span><b id=\"messages\">-</b></div>\n        <div class=\"card\"><span>valid json</span><b id=\"validJson\">-</b></div>\n        <div class=\"card\"><span>invalid json</span><b id=\"invalidJson\">-</b></div>\n        <div class=\"card\"><span>status</span><b id=\"status\">loading</b></div>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>earliest</span><b id=\"earliest\">-</b></div>\n        <div class=\"card\"><span>latest</span><b id=\"latest\">-</b></div>\n        <div class=\"card\"><span>acars-decoded (TS)</span><b id=\"acarsDecoded\">-</b></div>\n        <div class=\"card\"><span>libacars decoded</span><b id=\"libacarsDecoded\">-</b></div>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>labels</span><b id=\"labelCount\">-</b></div>\n        <div class=\"card\"><span>sources</span><b id=\"sourceCount\">-</b></div>\n      </section>\n      <section class=\"panel\"><h2>by label</h2><table><thead><tr><th>label</th><th>messages</th></tr></thead><tbody id=\"labelRows\"></tbody></table></section>\n      <section class=\"panel\"><h2>by source</h2><table><thead><tr><th>source</th><th>messages</th></tr></thead><tbody id=\"sourceRows\"></tbody></table></section>\n      <p class=\"status\" id=\"updated\"></p>\n    </main>\n    <script>\n      const fmt = new Intl.NumberFormat();\n      function esc(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));}\n      function setText(id,value){document.getElementById(id).textContent=value??'-';}\n      function rowsFromObject(obj){\n        return Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]||String(a[0]).localeCompare(String(b[0])))\n          .map(([k,c])=>`<tr><td>${esc(k)}</td><td>${fmt.format(c)}</td></tr>`).join('');\n      }\n      async function loadStats(){\n        try{\n          const res=await fetch('/airframes/stats',{cache:'no-store'});\n          if(!res.ok) throw new Error(res.status+' '+res.statusText);\n          const s=await res.json();\n          setText('messages',fmt.format(s.messages));\n          setText('validJson',fmt.format(s.valid_json));\n          setText('invalidJson',fmt.format(s.invalid_json));\n          setText('earliest',s.earliest_timestamp||'-');\n          setText('latest',s.latest_timestamp||'-');\n          setText('acarsDecoded',fmt.format(s.acars_decoded_count||0));\n          setText('libacarsDecoded',fmt.format(s.libacars_decoded_count||0));\n          setText('labelCount',Object.keys(s.by_label||{}).length);\n          setText('sourceCount',Object.keys(s.by_source||{}).length);\n          document.getElementById('labelRows').innerHTML=rowsFromObject(s.by_label);\n          document.getElementById('sourceRows').innerHTML=rowsFromObject(s.by_source);\n          setText('status','live');\n          document.getElementById('status').className='';\n          document.getElementById('updated').textContent='updated '+new Date().toISOString();\n        }catch(err){\n          setText('status','error');\n          document.getElementById('status').className='error';\n          document.getElementById('updated').textContent=String(err.message||err);\n        }\n      }\n      function tick(){document.getElementById('clock').textContent='UTC '+new Date().toISOString().replace('T',' ').slice(11,19)+' '+new Date().toISOString().slice(0,10);}\n      setInterval(loadStats,10000);\n      setInterval(tick,1000);\n      tick();\n      loadStats();\n    </script>\n  </body>\n</html>",
     "output": "str",
     "x": 390,
-    "y": 700,
+    "y": 880,
     "wires": [
       [
         "airframes-stats-page-response"
@@ -523,7 +554,7 @@
       "content-type": "text/html; charset=utf-8"
     },
     "x": 650,
-    "y": 700,
+    "y": 880,
     "wires": []
   }
 ]
