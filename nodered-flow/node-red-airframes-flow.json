@@ -1,560 +1,748 @@
 [
-  {
-    "id": "airframes-tab",
-    "type": "tab",
-    "label": "Airframes Stream",
-    "disabled": false,
-    "info": "Receives JSON events from socket_client.py via HTTP POST /airframes.\nDashboard: https://orange.prefix64.org:1880/airframes-dashboard\n\nACAS decoder: @airframes/acars-decoder (npm) runs natively in Node-RED function nodes.\nlibacars:      decode_acars_apps binary (kept for ARINC-622 / CPDLC labels).\n\nInstall before deploying:\n  cd ~/.node-red && npm install @airframes/acars-decoder\nThen in Node-RED Settings → functionExternalModules: true"
-  },
-  {
-    "id": "airframes-http-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "POST /airframes",
-    "url": "/airframes",
-    "method": "post",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 130,
-    "y": 90,
-    "wires": [
-      [
-        "airframes-json"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-json",
-    "type": "json",
-    "z": "airframes-tab",
-    "name": "Parse JSON",
-    "property": "payload",
-    "action": "obj",
-    "pretty": false,
-    "x": 320,
-    "y": 90,
-    "wires": [
-      [
-        "airframes-normalize"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-normalize",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Normalize, cache and route",
-    "func": "const DROP_ACARS_LABELS = [\"_d\"];\nconst LIBACARS_LABELS = [\"A6\", \"AA\", \"B6\", \"BA\", \"H1\", \"SA\", \"MA\"];\n\nfunction looksLikeAirframesEvent(value) {\n    return value && typeof value === \"object\" && (\n        value.id || value.timestamp || value.station || value.airframe || value.source\n    );\n}\n\nfunction extractEvent(value) {\n    if (!value || typeof value !== \"object\") return {};\n    if (looksLikeAirframesEvent(value)) return value;\n    for (const key of [\"payload\", \"event\", \"message\", \"data\"]) {\n        if (looksLikeAirframesEvent(value[key])) return value[key];\n    }\n    return value;\n}\n\nfunction response(payload) {\n    return {\n        req: msg.req,\n        res: msg.res,\n        statusCode: 200,\n        headers: { \"content-type\": \"application/json\" },\n        payload\n    };\n}\n\nfunction inferDirection(event) {\n    const direction = String(event.link_direction || \"\").toLowerCase();\n    if ([\"u\", \"uplink\", \"ground-to-air\", \"ground_to_air\"].includes(direction)) return \"u\";\n    if ([\"d\", \"downlink\", \"air-to-ground\", \"air_to_ground\"].includes(direction)) return \"d\";\n    return \"d\";\n}\n\nfunction shellQuote(value) {\n    return `'${String(value).replace(/'/g, `'\\''`)}'`;\n}\n\nfunction buildLibacarsMsg(event, normalized) {\n    const label = String(event.label || \"\").trim().toUpperCase();\n    const text  = String(event.text  || \"\");\n    if (!label || !text || !LIBACARS_LABELS.includes(label)) return null;\n    const direction = inferDirection(event);\n    return {\n        payload: `${direction} ${shellQuote(label)} ${shellQuote(text)}`,\n        normalized,\n        libacars_meta: { label, direction }\n    };\n}\n\nconst envelope = msg.payload || {};\nconst event    = extractEvent(envelope);\nconst label    = String(event.label || \"\").trim().toLowerCase();\n\nif (DROP_ACARS_LABELS.includes(label)) {\n    return [\n        null, null,\n        response({ ok: true, dropped: true, reason: \"acars_label\", label: event.label, id: event.id }),\n        null, null\n    ];\n}\n\nconst flight  = event.flight   || {};\nconst airframe = event.airframe || {};\nconst station  = event.station  || {};\nconst now      = new Date().toISOString();\n\nconst normalized = {\n    received_at:   now,\n    id:            event.id,\n    timestamp:     event.timestamp || event.created_at || now,\n    station:       station.ident,\n    country:       station.country_code,\n    flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n    airframe_icao: airframe.icao,\n    tail:          airframe.tail || event.tail,\n    military:      airframe.military,\n    source:        event.source,\n    source_type:   event.source_type,\n    frequency:     event.frequency,\n    label:         event.label,\n    mode:          event.mode,\n    text:          event.text,\n    raw:           event\n};\n\nlet recent = flow.get(\"airframes_recent\") || [];\nrecent.unshift(normalized);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nconst debugMsg    = { payload: normalized };\nconst fileMsg     = { payload: JSON.stringify(normalized) };\nconst responseMsg = response({ ok: true, id: normalized.id, received_at: normalized.received_at });\nconst libacarsMsg = buildLibacarsMsg(event, normalized);\n\n// Output 5: pass ALL messages (with label+text) to acars-decoder-typescript\nconst acarsDecoderMsg = (normalized.label && normalized.text)\n    ? { payload: normalized, normalized }\n    : null;\n\nreturn [debugMsg, fileMsg, responseMsg, libacarsMsg, acarsDecoderMsg];",
-    "outputs": 5,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 560,
-    "y": 90,
-    "wires": [
-      [
-        "airframes-debug"
-      ],
-      [
-        "airframes-file"
-      ],
-      [
-        "airframes-response"
-      ],
-      [
-        "airframes-libacars-exec"
-      ],
-      [
-        "airframes-acars-decoder"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-acars-decoder",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "acars-decoder-typescript decode",
-    "func": "// ── acars-decoder-typescript integration ──────────────────────────────────\n// Requires: cd ~/.node-red && npm install @airframes/acars-decoder\n// Node-RED settings.js must have:  functionExternalModules: true\n//\n// This node decodes the ACARS text payload for ALL labels using the\n// @airframes/acars-decoder npm package, then enriches the event and\n// updates the flow-level cache so the dashboard shows decoded data.\n// It runs IN PARALLEL with the libacars exec branch (which handles\n// ARINC-622 / CPDLC labels via the C binary decode_acars_apps).\n// ──────────────────────────────────────────────────────────────────────────\n\nconst normalized = msg.normalized || msg.payload || {};\nconst event      = normalized.raw || {};\n\nconst label  = String(normalized.label  || event.label  || \"\").trim().toUpperCase();\nconst text   = String(normalized.text   || event.text   || \"\").trim();\nconst tail   = String(normalized.tail   || event.tail   || \"\").trim();\nconst flight = String(normalized.flight || \"\").trim();\n\nif (!label || !text) {\n    return [null, null];\n}\n\nlet decoded = null;\nlet decodeError = null;\n\ntry {\n    // The module is registered in the \"Setup\" tab of this function node\n    // as:  Name = AcarsDecoder  |  Module = @airframes/acars-decoder\n    const { MessageDecoder } = AcarsDecoder;\n    const decoder = new MessageDecoder();\n\n    // Build the message object the decoder expects\n    const msgObj = { label, text };\n    if (tail)   msgObj.tail   = tail;\n    if (flight) msgObj.flight = flight;\n\n    decoded = decoder.decode(msgObj);\n} catch (err) {\n    decodeError = err.message || String(err);\n    node.warn(\"acars-decoder error [\" + label + \"]: \" + decodeError);\n}\n\n// Only enrich if the decoder produced meaningful output\nif (!decoded) {\n    return [null, null];\n}\n\nconst enriched = {\n    ...normalized,\n    acars_decoded: {\n        ok:        true,\n        label,\n        decoded,\n        decoder:   \"acars-decoder-typescript\"\n    }\n};\n\n// Update the flow cache: replace existing entry by key\nlet recent = flow.get(\"airframes_recent\") || [];\nconst key  = enriched.id || `${enriched.timestamp}-${enriched.station}-${enriched.text}`;\nrecent = recent.filter(e => {\n    const k = e.id || `${e.timestamp}-${e.station}-${e.text}`;\n    return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nreturn [\n    { payload: enriched },\n    { payload: JSON.stringify(enriched) }\n];",
-    "outputs": 2,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [
-      {
-        "var": "AcarsDecoder",
-        "module": "@airframes/acars-decoder"
-      }
-    ],
-    "x": 880,
-    "y": 310,
-    "wires": [
-      [
-        "airframes-debug"
-      ],
-      [
-        "airframes-file"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-debug",
-    "type": "debug",
-    "z": "airframes-tab",
-    "name": "Airframes event",
-    "active": true,
-    "tosidebar": true,
-    "console": false,
-    "tostatus": false,
-    "complete": "payload",
-    "targetType": "msg",
-    "statusVal": "",
-    "statusType": "auto",
-    "x": 840,
-    "y": 40,
-    "wires": []
-  },
-  {
-    "id": "airframes-file",
-    "type": "file",
-    "z": "airframes-tab",
-    "name": "Append JSONL",
-    "filename": "/mnt/ssl/acars",
-    "filenameType": "str",
-    "appendNewline": true,
-    "createDir": false,
-    "overwriteFile": "false",
-    "encoding": "utf8",
-    "x": 840,
-    "y": 90,
-    "wires": [
-      []
-    ]
-  },
-  {
-    "id": "airframes-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "200 OK",
-    "statusCode": "",
-    "headers": {},
-    "x": 820,
-    "y": 140,
-    "wires": []
-  },
-  {
-    "id": "airframes-libacars-exec",
-    "type": "exec",
-    "z": "airframes-tab",
-    "command": "LA_JSON=1 /usr/local/bin/decode_acars_apps",
-    "addpay": "payload",
-    "append": "",
-    "useSpawn": "false",
-    "timer": "8",
-    "winHide": false,
-    "oldrc": false,
-    "name": "decode_acars_apps JSON",
-    "x": 850,
-    "y": 210,
-    "wires": [
-      [
-        "airframes-libacars-parse"
-      ],
-      [
-        "airframes-libacars-stderr"
-      ],
-      []
-    ]
-  },
-  {
-    "id": "airframes-libacars-parse",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Attach libacars decode",
-    "func": "const normalized = msg.normalized || {};\nconst meta       = msg.libacars_meta || {};\nconst stdout     = String(msg.payload || \"\").trim();\n\nif (!stdout) return [null, null];\n\nfunction parseLibacarsOutput(output) {\n    try { return JSON.parse(output); } catch (err) {}\n    const lines = output.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\n    for (let i = lines.length - 1; i >= 0; i--) {\n        const line = lines[i];\n        if (!line.startsWith(\"{\") && !line.startsWith(\"[\")) continue;\n        try { return JSON.parse(line); } catch (err) {}\n    }\n    return output;\n}\n\nconst decoded = parseLibacarsOutput(stdout);\nconst enriched = {\n    ...normalized,\n    libacars: {\n        ok:        true,\n        label:     meta.label,\n        direction: meta.direction,\n        decoded,\n        decoder:   \"libacars\"\n    }\n};\n\nlet recent = flow.get(\"airframes_recent\") || [];\nconst key  = enriched.id || `${enriched.timestamp}-${enriched.station}-${enriched.text}`;\nrecent = recent.filter(e => {\n    const k = e.id || `${e.timestamp}-${e.station}-${e.text}`;\n    return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set(\"airframes_recent\", recent);\n\nreturn [\n    { payload: enriched },\n    { payload: JSON.stringify(enriched) }\n];",
-    "outputs": 2,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 1110,
-    "y": 190,
-    "wires": [
-      [
-        "airframes-debug"
-      ],
-      [
-        "airframes-file"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-libacars-stderr",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Format libacars stderr",
-    "func": "const stderr = String(msg.payload || \"\").trim();\nif (!stderr) return null;\nmsg.payload = {\n    libacars_error: stderr,\n    id:        msg.normalized?.id,\n    label:     msg.libacars_meta?.label,\n    direction: msg.libacars_meta?.direction\n};\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 1110,
-    "y": 240,
-    "wires": [
-      [
-        "airframes-debug"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-dashboard-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes-dashboard",
-    "url": "/airframes-dashboard",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 160,
-    "y": 420,
-    "wires": [
-      [
-        "airframes-dashboard-template"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-dashboard-template",
-    "type": "template",
-    "z": "airframes-tab",
-    "name": "Dashboard HTML",
-    "field": "payload",
-    "fieldType": "msg",
-    "format": "handlebars",
-    "syntax": "mustache",
-    "template": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>airframes stream</title>\n    <style>\n      :root {\n        --bg: #0d1117;\n        --surface: #151b23;\n        --surface-2: #1b2430;\n        --surface-3: #202b38;\n        --row: #121922;\n        --row2: #16202b;\n        --head: #243140;\n        --line: #2b3747;\n        --text: #e7edf4;\n        --muted: #93a0ad;\n        --accent: #8fa9c8;\n        --accent-2: #c0a36b;\n        --danger: #a66565;\n        --shadow: 0 20px 50px rgba(0, 0, 0, 0.28);\n      }\n      * { box-sizing: border-box; }\n      body {\n        margin: 0;\n        background:\n          radial-gradient(circle at top left, rgba(143,169,200,0.08), transparent 32rem),\n          linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);\n        color: var(--text);\n        font: 15px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace;\n      }\n      .topbar {\n        height: 58px;\n        background: rgba(15,21,29,0.96);\n        display: flex;\n        align-items: center;\n        justify-content: space-between;\n        padding: 0 24px;\n        border-bottom: 1px solid var(--line);\n        white-space: nowrap;\n        overflow: hidden;\n        box-shadow: 0 1px 0 rgba(255,255,255,0.03);\n      }\n      .brand { display: flex; align-items: center; gap: 14px; color: #f2f5f8; font-size: 16px; font-weight: 650; letter-spacing: 0.02em; }\n      .menu {\n        width: 34px; height: 34px;\n        border: 1px solid var(--line);\n        border-radius: 10px;\n        display: inline-grid; place-items: center;\n        background: var(--surface); color: var(--accent);\n        font-size: 20px; line-height: 1; text-decoration: none;\n      }\n      .menu:hover, .menu:focus { background: rgba(143,169,200,0.12); outline: none; }\n      .clock { color: var(--muted); font-size: 14px; }\n      main { width: min(1560px, calc(100vw - 32px)); margin: 0 auto; padding: 22px 0 34px; }\n      h1 { margin: 0 0 16px; padding: 18px 20px; background: linear-gradient(135deg, rgba(21,27,35,0.96), rgba(27,36,48,0.9)); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); color: #f7f9fb; font-size: 19px; font-weight: 650; letter-spacing: 0.01em; }\n      .stats { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; margin: 0 0 12px; }\n      .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; min-width: 0; }\n      .stat b { display: block; color: #f4f7fa; font-size: 20px; font-weight: 650; }\n      .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }\n      .controls { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; padding: 12px; background: rgba(21,27,35,0.78); border: 1px solid var(--line); border-radius: 16px; }\n      .controls input, .controls select { background: #0f151d; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; }\n      .controls input:focus, .controls select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(143,169,200,0.12); }\n      .table-wrap { width: 100%; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }\n      table { width: 100%; border-collapse: collapse; min-width: 1040px; }\n      thead th { background: var(--head); color: #c9d4df; text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; position: sticky; top: 0; z-index: 2; }\n      tbody tr:nth-child(odd) { background: var(--row); }\n      tbody tr:nth-child(even) { background: var(--row2); }\n      td { padding: 10px 12px; border-bottom: 1px solid rgba(43,55,71,0.55); vertical-align: top; white-space: nowrap; }\n      td.text { white-space: normal; min-width: 320px; max-width: 520px; }\n      .detail-btn { background: transparent; color: var(--accent); border: 1px solid rgba(143,169,200,0.42); border-radius: 999px; padding: 4px 9px; font: inherit; font-size: 12px; cursor: pointer; }\n      .hex-btn { background: rgba(143,169,200,0.08); color: var(--accent); border: 1px solid rgba(143,169,200,0.35); border-radius: 8px; padding: 3px 7px; font: inherit; cursor: pointer; }\n      .hex-btn:disabled { cursor: default; opacity: 0.45; }\n      .detail-btn:hover, .detail-btn:focus, .hex-btn:hover, .hex-btn:focus { background: rgba(143,169,200,0.12); outline: none; }\n      a { color: var(--accent); }\n      .badge { color: #211807; background: var(--accent-2); padding: 2px 7px; border-radius: 999px; font-size: 12px; font-weight: 700; }\n      .badge.y { color: #fff; background: var(--danger); }\n      .badge.decoded { color: #fff; background: #3a6b3a; }\n      .muted { color: var(--muted); }\n      .detail-overlay { position: fixed; inset: 0; z-index: 10; display: none; background: rgba(4,7,11,0.62); backdrop-filter: blur(4px); }\n      .detail-overlay.open { display: block; }\n      .detail-panel { position: absolute; top: 0; right: 0; width: min(780px,100vw); height: 100%; overflow: auto; background: #101720; border-left: 1px solid var(--line); box-shadow: -24px 0 60px rgba(0,0,0,0.35); }\n      .detail-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px; background: rgba(16,23,32,0.96); border-bottom: 1px solid var(--line); }\n      .detail-title { margin: 0; color: #f7f9fb; font-size: 18px; }\n      .detail-subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }\n      .close-btn { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }\n      .detail-body { padding: 18px 20px 28px; }\n      .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }\n      .detail-field { min-width: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }\n      .detail-field span { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }\n      .detail-field b { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--text); font-weight: 600; }\n      .detail-section { margin-top: 16px; }\n      .detail-section h3 { margin: 0 0 8px; color: #f2f5f8; font-size: 14px; letter-spacing: 0.05em; text-transform: uppercase; }\n      .tabs { display: flex; gap: 6px; margin-bottom: 8px; }\n      .tab-btn { background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer; }\n      .tab-btn.active { background: rgba(143,169,200,0.14); color: var(--accent); border-color: var(--accent); }\n      .tab-btn:hover { background: rgba(143,169,200,0.10); }\n      .message-text, .json-view { margin: 0; padding: 14px; overflow: auto; background: #0b1017; border: 1px solid var(--line); border-radius: 12px; color: #dce6ef; white-space: pre-wrap; }\n      .json-view { max-height: 42vh; font-size: 12px; }\n      .api-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }\n      .api-status { color: var(--muted); font-size: 12px; }\n      .decoder-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; margin-left: 6px; }\n      .decoder-badge.acars { background: #1e3a5f; color: #8fa9c8; border: 1px solid #2a4f7a; }\n      .decoder-badge.libacars { background: #3a3020; color: #c0a36b; border: 1px solid #5a4a30; }\n      @media (max-width: 900px) {\n        main { width: min(100vw - 20px, 1560px); padding: 12px 0 20px; }\n        .topbar { height: 54px; padding: 0 12px; }\n        .clock { display: none; }\n        table { min-width: 900px; font-size: 13px; }\n        .stats { grid-template-columns: repeat(2, minmax(130px, 1fr)); }\n        .detail-grid { grid-template-columns: 1fr; }\n      }\n    </style>\n  </head>\n  <body>\n    <header class=\"topbar\">\n      <div class=\"brand\">\n        <a class=\"menu\" href=\"/airframes-stats\" title=\"Open stats\">=</a>\n        <span>airframes - stream</span>\n      </div>\n      <div class=\"clock\" id=\"clock\"></div>\n    </header>\n    <main>\n      <h1>airframes - live and stored feed</h1>\n      <section class=\"stats\">\n        <div class=\"stat\"><b id=\"last\">-</b><span>latest UTC</span></div>\n        <div class=\"stat\"><b id=\"status\">loading</b><span>status</span></div>\n        <div class=\"stat\"><b id=\"decodedCount\">-</b><span>decoded (session)</span></div>\n        <div class=\"stat\"><b id=\"libacarsCount\">-</b><span>libacars decoded</span></div>\n      </section>\n      <section class=\"controls\">\n        <input id=\"q\" placeholder=\"filter icao, tail, text...\" size=\"42\" />\n        <select id=\"mil\">\n          <option value=\"all\">all</option>\n          <option value=\"true\">military only</option>\n          <option value=\"false\">non-military</option>\n        </select>\n        <select id=\"decoded\">\n          <option value=\"all\">all messages</option>\n          <option value=\"acars\">acars-decoded only</option>\n          <option value=\"libacars\">libacars only</option>\n          <option value=\"any\">any decoded</option>\n        </select>\n        <select id=\"limit\">\n          <option>100</option>\n          <option selected>250</option>\n          <option>500</option>\n          <option>1000</option>\n        </select>\n      </section>\n      <div class=\"table-wrap\">\n        <table>\n          <thead>\n            <tr>\n              <th>time</th>\n              <th>icao</th>\n              <th>call(s)</th>\n              <th>tail</th>\n              <th>label</th>\n              <th>decoded</th>\n              <th>text</th>\n              <th>details</th>\n            </tr>\n          </thead>\n          <tbody id=\"rows\"></tbody>\n        </table>\n      </div>\n    </main>\n    <div class=\"detail-overlay\" id=\"detailOverlay\" aria-hidden=\"true\">\n      <aside class=\"detail-panel\" aria-label=\"message details\">\n        <header class=\"detail-head\">\n          <div>\n            <h2 class=\"detail-title\" id=\"detailTitle\">message</h2>\n            <p class=\"detail-subtitle\" id=\"detailSubtitle\"></p>\n          </div>\n          <button class=\"close-btn\" type=\"button\" onclick=\"closeDetails()\">x</button>\n        </header>\n        <div class=\"detail-body\">\n          <section class=\"detail-grid\" id=\"detailGrid\"></section>\n          <section class=\"detail-section\">\n            <h3>message text</h3>\n            <pre class=\"message-text\" id=\"detailText\"></pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>acars-decoder-typescript\n              <span class=\"decoder-badge acars\">TS</span>\n            </h3>\n            <span class=\"api-status\" id=\"acarsDecoderStatus\">not decoded</span>\n            <pre class=\"json-view\" id=\"acarsDecoderJson\">No acars-decoder result for this message.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>libacars decode\n              <span class=\"decoder-badge libacars\">C</span>\n            </h3>\n            <span class=\"api-status\" id=\"libacarsStatus\">not decoded</span>\n            <pre class=\"json-view\" id=\"libacarsJson\">No libacars decode available for this message.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>airframe api</h3>\n            <div class=\"api-actions\">\n              <button class=\"detail-btn\" type=\"button\" id=\"loadAirframeApi\">load airframe data</button>\n              <span class=\"api-status\" id=\"airframeApiStatus\">not loaded</span>\n            </div>\n            <pre class=\"json-view\" id=\"airframeApiJson\">Press load airframe data to query api.airframes.io.</pre>\n          </section>\n          <section class=\"detail-section\">\n            <h3>raw json</h3>\n            <pre class=\"json-view\" id=\"detailJson\"></pre>\n          </section>\n        </div>\n      </aside>\n    </div>\n    <script>\n      const rowsEl          = document.getElementById('rows');\n      const qEl             = document.getElementById('q');\n      const milEl           = document.getElementById('mil');\n      const limitEl         = document.getElementById('limit');\n      const decodedFilterEl = document.getElementById('decoded');\n      const detailOverlay   = document.getElementById('detailOverlay');\n      const detailTitle     = document.getElementById('detailTitle');\n      const detailSubtitle  = document.getElementById('detailSubtitle');\n      const detailGrid      = document.getElementById('detailGrid');\n      const detailText      = document.getElementById('detailText');\n      const detailJson      = document.getElementById('detailJson');\n      const libacarsStatus  = document.getElementById('libacarsStatus');\n      const libacarsJson    = document.getElementById('libacarsJson');\n      const acarsDecoderStatus = document.getElementById('acarsDecoderStatus');\n      const acarsDecoderJson   = document.getElementById('acarsDecoderJson');\n      const loadAirframeApiBtn = document.getElementById('loadAirframeApi');\n      const airframeApiStatus  = document.getElementById('airframeApiStatus');\n      const airframeApiJson    = document.getElementById('airframeApiJson');\n\n      let events = [];\n      let selectedEvent = null;\n\n      function esc(v) {\n        return String(v ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\n      }\n      function shortTime(v) { return String(v || '').replace('Z','Z'); }\n      function yesNo(v) {\n        return v === true ? '<span class=\"badge y\">Y</span>'\n             : v === false ? '<span class=\"badge\">N</span>' : '';\n      }\n      function formatValue(v) {\n        if (v === null || v === undefined || v === '') return '-';\n        return String(v);\n      }\n      function detailField(label, value) {\n        return `<div class=\"detail-field\"><span>${esc(label)}</span><b>${esc(formatValue(value))}</b></div>`;\n      }\n      function eventTitle(e) {\n        return e.flight || e.tail || e.airframe_icao || e.id || 'message';\n      }\n      function hexButton(icao, index) {\n        if (!icao) return '';\n        return `<button class=\"hex-btn\" type=\"button\" data-api-index=\"${index}\" title=\"Load airframes API data\">${esc(icao)}</button>`;\n      }\n      function decodedBadge(e) {\n        const parts = [];\n        if (e.acars_decoded?.ok)  parts.push('<span class=\"badge decoded\" title=\"acars-decoder-typescript\">TS</span>');\n        if (e.libacars?.ok)       parts.push('<span class=\"badge\" style=\"background:#5a4a30;color:#c0a36b\" title=\"libacars\">LA</span>');\n        return parts.join(' ');\n      }\n\n      function openDetails(index) {\n        const e = events[index];\n        if (!e) return;\n        selectedEvent = e;\n        const raw = e.raw || e;\n\n        detailTitle.textContent    = eventTitle(e);\n        detailSubtitle.textContent = `${formatValue(e.timestamp)} · ${formatValue(e.station)} · ${formatValue(e.source || e.source_type)}`;\n\n        detailGrid.innerHTML = [\n          detailField('id',           e.id),\n          detailField('timestamp',    e.timestamp),\n          detailField('received',     e.received_at),\n          detailField('station',      e.station),\n          detailField('country',      e.country),\n          detailField('flight',       e.flight),\n          detailField('icao',         e.airframe_icao),\n          detailField('tail',         e.tail),\n          detailField('military',     e.military),\n          detailField('source',       e.source),\n          detailField('source type',  e.source_type),\n          detailField('frequency',    e.frequency),\n          detailField('label',        e.label),\n          detailField('mode',         e.mode),\n          detailField('acars-decoder', e.acars_decoded?.ok ? 'decoded (TS)' : 'not decoded'),\n          detailField('libacars',      e.libacars?.ok      ? 'decoded (LA)' : 'not decoded'),\n        ].join('');\n\n        detailText.textContent = formatValue(e.text);\n\n        // acars-decoder-typescript section\n        acarsDecoderStatus.textContent = e.acars_decoded?.ok ? 'decoded' : 'not decoded';\n        acarsDecoderJson.textContent   = e.acars_decoded\n          ? JSON.stringify(e.acars_decoded, null, 2)\n          : 'No acars-decoder result for this message.';\n\n        // libacars section\n        libacarsStatus.textContent = e.libacars?.ok ? 'decoded' : 'not decoded';\n        libacarsJson.textContent   = e.libacars\n          ? JSON.stringify(e.libacars, null, 2)\n          : 'No libacars decode available for this message.';\n\n        detailJson.textContent = JSON.stringify(raw, null, 2);\n\n        airframeApiStatus.textContent = e.airframe_icao ? 'not loaded' : 'no hex available';\n        airframeApiJson.textContent   = e.airframe_icao\n          ? 'Press load airframe data to query api.airframes.io.'\n          : 'This message does not include an airframe hex.';\n        loadAirframeApiBtn.disabled = !e.airframe_icao;\n\n        detailOverlay.classList.add('open');\n        detailOverlay.removeAttribute('aria-hidden');\n      }\n\n      function closeDetails() {\n        detailOverlay.classList.remove('open');\n        detailOverlay.setAttribute('aria-hidden', 'true');\n      }\n\n      async function loadAirframeApi(eventData = selectedEvent) {\n        const icao = eventData?.airframe_icao;\n        if (!icao) return;\n        airframeApiStatus.textContent = 'loading...';\n        airframeApiJson.textContent   = '';\n        loadAirframeApiBtn.disabled   = true;\n        try {\n          const res     = await fetch(`/airframes/api/icao/${encodeURIComponent(icao)}`, { cache: 'no-store' });\n          const payload = await res.json();\n          if (!res.ok) throw new Error(payload.error || `${res.status} ${res.statusText}`);\n          airframeApiStatus.textContent = 'loaded';\n          airframeApiJson.textContent   = JSON.stringify(payload, null, 2);\n        } catch (err) {\n          airframeApiStatus.textContent = 'error';\n          airframeApiJson.textContent   = String(err.message || err);\n        } finally {\n          loadAirframeApiBtn.disabled = false;\n        }\n      }\n\n      function keyText(e) {\n        return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, e.text].join(' ').toLowerCase();\n      }\n\n      function render() {\n        const q   = qEl.value.trim().toLowerCase();\n        const mil = milEl.value;\n        const df  = decodedFilterEl.value;\n\n        const filtered = events.filter(e => {\n          if (q   && !keyText(e).includes(q))          return false;\n          if (mil !== 'all' && String(e.military) !== mil) return false;\n          if (df === 'acars'    && !e.acars_decoded?.ok)    return false;\n          if (df === 'libacars' && !e.libacars?.ok)         return false;\n          if (df === 'any'      && !e.acars_decoded?.ok && !e.libacars?.ok) return false;\n          return true;\n        });\n\n        rowsEl.innerHTML = filtered.map(e => {\n          const index = events.indexOf(e);\n          return `<tr>\n            <td>${esc(shortTime(e.timestamp))}</td>\n            <td>${hexButton(e.airframe_icao, index)}</td>\n            <td>${esc(e.flight)}</td>\n            <td>${esc(e.tail)}</td>\n            <td>${esc(e.label)}</td>\n            <td>${decodedBadge(e)}</td>\n            <td class=\"text\">${esc(e.text)}</td>\n            <td><button class=\"detail-btn\" type=\"button\" data-index=\"${index}\">details</button></td>\n          </tr>`;\n        }).join('');\n\n        document.getElementById('last').textContent   = events[0]?.timestamp ? events[0].timestamp.slice(11,19) : '-';\n        document.getElementById('decodedCount').textContent = events.filter(e => e.acars_decoded?.ok).length;\n        document.getElementById('libacarsCount').textContent = events.filter(e => e.libacars?.ok).length;\n      }\n\n      async function load() {\n        try {\n          const res = await fetch(`/airframes/events?limit=${encodeURIComponent(limitEl.value)}`, { cache: 'no-store' });\n          if (!res.ok) throw new Error(res.status + ' ' + res.statusText);\n          events = await res.json();\n          document.getElementById('status').textContent = 'live';\n          render();\n        } catch (err) {\n          document.getElementById('status').textContent = 'error';\n          console.error(err);\n        }\n      }\n\n      function tick() {\n        document.getElementById('clock').textContent =\n          'UTC ' + new Date().toISOString().replace('T',' ').slice(11,19) + ' ' + new Date().toISOString().slice(0,10);\n      }\n\n      qEl.addEventListener('input', render);\n      milEl.addEventListener('change', render);\n      decodedFilterEl.addEventListener('change', render);\n      limitEl.addEventListener('change', load);\n\n      rowsEl.addEventListener('click', event => {\n        const apiBtn = event.target.closest('.hex-btn');\n        if (apiBtn) {\n          const index = Number(apiBtn.dataset.apiIndex);\n          openDetails(index);\n          loadAirframeApi(events[index]);\n          return;\n        }\n        const btn = event.target.closest('.detail-btn');\n        if (!btn) return;\n        openDetails(Number(btn.dataset.index));\n      });\n\n      loadAirframeApiBtn.addEventListener('click', () => loadAirframeApi());\n      detailOverlay.addEventListener('click', event => { if (event.target === detailOverlay) closeDetails(); });\n      document.addEventListener('keydown', event => { if (event.key === 'Escape') closeDetails(); });\n\n      setInterval(load, 3000);\n      setInterval(tick, 1000);\n      tick();\n      load();\n    </script>\n  </body>\n</html>",
-    "output": "str",
-    "x": 430,
-    "y": 420,
-    "wires": [
-      [
-        "airframes-dashboard-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-dashboard-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Dashboard response",
-    "statusCode": "200",
-    "headers": {
-      "content-type": "text/html; charset=utf-8"
+    {
+        "id": "59cf6c9ce7d654ea",
+        "type": "tab",
+        "label": "Airframes.io Flow",
+        "disabled": false,
+        "info": "ACARS stream processor.\n\nRequirements:\n  cd ~/.node-red && npm install @airframes/acars-decoder\n  settings.js -> functionExternalModules: true\n\nStatic assets (dashboard.css + dashboard.js) must be placed at:\n  /mnt/ssl/static/dashboard.css\n  /mnt/ssl/static/dashboard.js\n\nOr adjust the file-in paths in the airframes-css-read / airframes-js-read nodes.\n\nFIX: Sub-decoders (libacars, acars-decoder, api) NO longer write directly to\nthe JSONL file. Instead they call 'airframes-merge-and-persist' which deep-merges\nall enrichment fields onto the base record and appends a SINGLE updated line.\nThe events reader merges all lines sharing the same key so no enrichment is lost.",
+        "env": []
     },
-    "x": 710,
-    "y": 420,
-    "wires": []
-  },
-  {
-    "id": "airframes-events-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes/events",
-    "url": "/airframes/events",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 150,
-    "y": 530,
-    "wires": [
-      [
-        "airframes-file-in"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-file-in",
-    "type": "file in",
-    "z": "airframes-tab",
-    "name": "Read JSONL",
-    "filename": "/mnt/ssl/acars",
-    "filenameType": "str",
-    "format": "utf8",
-    "chunk": false,
-    "sendError": true,
-    "encoding": "none",
-    "allProps": false,
-    "x": 360,
-    "y": 530,
-    "wires": [
-      [
-        "airframes-events-build"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-events-build",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Build events JSON",
-    "func": "function normalize(record) {\n    if (!record || typeof record !== \"object\") return null;\n    if (record.raw || record.received_at || record.airframe_icao) return record;\n    const flight   = record.flight   || {};\n    const airframe = record.airframe || {};\n    const station  = record.station  || {};\n    return {\n        received_at:   record.received_at,\n        id:            record.id,\n        timestamp:     record.timestamp || record.created_at,\n        station:       station.ident,\n        country:       station.country_code,\n        flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n        airframe_icao: airframe.icao,\n        tail:          airframe.tail || record.tail,\n        military:      airframe.military,\n        source:        record.source,\n        source_type:   record.source_type,\n        frequency:     record.frequency,\n        label:         record.label,\n        mode:          record.mode,\n        text:          record.text,\n        raw:           record\n    };\n}\n\nconst limit  = Math.max(1, Math.min(parseInt(msg.req?.query?.limit || \"250\", 10) || 250, 2000));\nconst lines  = String(msg.payload || \"\").split(/\\r?\\n/).filter(Boolean);\nconst stored = [];\n\nfor (let i = lines.length - 1; i >= 0 && stored.length < limit; i--) {\n    try {\n        const parsed = normalize(JSON.parse(lines[i]));\n        if (parsed) stored.push(parsed);\n    } catch (err) { /* ignore non-JSON lines */ }\n}\n\nconst recent = flow.get(\"airframes_recent\") || [];\nconst byId   = new Map();\nfor (const event of [...recent, ...stored]) {\n    const key = event.id || `${event.timestamp}-${event.station}-${event.text}`;\n    if (!byId.has(key)) byId.set(key, event);\n}\n\nmsg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nmsg.payload = JSON.stringify([...byId.values()].slice(0, limit));\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 570,
-    "y": 530,
-    "wires": [
-      [
-        "airframes-events-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-events-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Events response",
-    "statusCode": "200",
-    "headers": {},
-    "x": 800,
-    "y": 530,
-    "wires": []
-  },
-  {
-    "id": "airframes-api-icao-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes/api/icao/:icao",
-    "url": "/airframes/api/icao/:icao",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 170,
-    "y": 630,
-    "wires": [
-      [
-        "airframes-api-icao-build"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-build",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Build airframes API request",
-    "func": "const icao = String(msg.req?.params?.icao || \"\").trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n    msg.statusCode = 400;\n    msg.headers    = { \"content-type\": \"application/json; charset=utf-8\" };\n    msg.payload    = { error: \"invalid_icao\", icao };\n    return [null, msg];\n}\nmsg.url     = `https://api.airframes.io/airframes/icao/${encodeURIComponent(icao)}`;\nmsg.method  = \"GET\";\nmsg.headers = { accept: \"application/json\" };\nreturn [msg, null];",
-    "outputs": 2,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 430,
-    "y": 630,
-    "wires": [
-      [
-        "airframes-api-icao-request"
-      ],
-      [
-        "airframes-api-icao-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-request",
-    "type": "http request",
-    "z": "airframes-tab",
-    "name": "api.airframes.io icao lookup",
-    "method": "use",
-    "ret": "obj",
-    "paytoqs": "ignore",
-    "url": "",
-    "tls": "",
-    "persist": false,
-    "proxy": "",
-    "insecureHTTPParser": false,
-    "authType": "",
-    "senderr": false,
-    "headers": [],
-    "x": 710,
-    "y": 615,
-    "wires": [
-      [
-        "airframes-api-icao-format"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-format",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Format airframes API response",
-    "func": "msg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nif (msg.statusCode && msg.statusCode >= 400) {\n    msg.payload = { error: \"airframes_api_error\", statusCode: msg.statusCode, response: msg.payload };\n    return msg;\n}\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 980,
-    "y": 615,
-    "wires": [
-      [
-        "airframes-api-icao-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-api-icao-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Airframe API response",
-    "statusCode": "",
-    "headers": {},
-    "x": 990,
-    "y": 660,
-    "wires": []
-  },
-  {
-    "id": "airframes-stats-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes/stats",
-    "url": "/airframes/stats",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 140,
-    "y": 760,
-    "wires": [
-      [
-        "airframes-stats-file-in"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-statats-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes/statats alias",
-    "url": "/airframes/statats",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 160,
-    "y": 810,
-    "wires": [
-      [
-        "airframes-stats-file-in"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-stats-file-in",
-    "type": "file in",
-    "z": "airframes-tab",
-    "name": "Read ACARS stats file",
-    "filename": "/mnt/ssl/acars",
-    "filenameType": "str",
-    "format": "utf8",
-    "chunk": false,
-    "sendError": true,
-    "encoding": "none",
-    "allProps": false,
-    "x": 410,
-    "y": 785,
-    "wires": [
-      [
-        "airframes-stats-build"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-stats-build",
-    "type": "function",
-    "z": "airframes-tab",
-    "name": "Build ACARS stats",
-    "func": "const content = String(msg.payload || \"\");\nconst lines   = content.split(/\\r?\\n/).filter(l => l.trim().length > 0);\nlet validJson = 0, invalidJson = 0;\nlet acarsDecodedCount = 0, libacarsDecodedCount = 0;\nconst byLabel = {}, bySource = {};\nlet latestTimestamp = null, earliestTimestamp = null;\n\nfor (const line of lines) {\n    try {\n        const event     = JSON.parse(line);\n        const label     = event.label     || event.raw?.label     || \"unknown\";\n        const source    = event.source    || event.raw?.source    || \"unknown\";\n        const timestamp = event.timestamp || event.raw?.timestamp;\n        validJson += 1;\n        if (event.acars_decoded?.ok) acarsDecodedCount += 1;\n        if (event.libacars?.ok)      libacarsDecodedCount += 1;\n        byLabel[label]   = (byLabel[label]   || 0) + 1;\n        bySource[source] = (bySource[source] || 0) + 1;\n        if (timestamp) {\n            if (!latestTimestamp   || timestamp > latestTimestamp)   latestTimestamp   = timestamp;\n            if (!earliestTimestamp || timestamp < earliestTimestamp) earliestTimestamp = timestamp;\n        }\n    } catch (err) {\n        invalidJson += 1;\n    }\n}\n\nmsg.headers = { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" };\nmsg.payload = JSON.stringify({\n    file:                   \"/mnt/ssl/acars\",\n    messages:               lines.length,\n    valid_json:             validJson,\n    invalid_json:           invalidJson,\n    acars_decoded_count:    acarsDecodedCount,\n    libacars_decoded_count: libacarsDecodedCount,\n    earliest_timestamp:     earliestTimestamp,\n    latest_timestamp:       latestTimestamp,\n    by_label:               byLabel,\n    by_source:              bySource\n});\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 640,
-    "y": 785,
-    "wires": [
-      [
-        "airframes-stats-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-stats-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Stats response",
-    "statusCode": "200",
-    "headers": {},
-    "x": 850,
-    "y": 785,
-    "wires": []
-  },
-  {
-    "id": "airframes-stats-page-in",
-    "type": "http in",
-    "z": "airframes-tab",
-    "name": "GET /airframes-stats",
-    "url": "/airframes-stats",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 140,
-    "y": 880,
-    "wires": [
-      [
-        "airframes-stats-page-template"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-stats-page-template",
-    "type": "template",
-    "z": "airframes-tab",
-    "name": "Stats page HTML",
-    "field": "payload",
-    "fieldType": "msg",
-    "format": "handlebars",
-    "syntax": "mustache",
-    "template": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>airframes stats</title>\n    <style>\n      :root { --bg:#0d1117;--surface:#151b23;--head:#243140;--line:#2b3747;--text:#e7edf4;--muted:#93a0ad;--accent:#8fa9c8;--warn:#c0a36b;--shadow:0 20px 50px rgba(0,0,0,0.28); }\n      *{box-sizing:border-box}\n      body{margin:0;min-height:100vh;background:radial-gradient(circle at top left,rgba(143,169,200,0.08),transparent 32rem),linear-gradient(180deg,#0d1117 0%,#0a0d12 100%);color:var(--text);font:15px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,\"Liberation Mono\",monospace}\n      .topbar{height:58px;background:rgba(15,21,29,0.96);display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--line)}\n      .brand{display:flex;align-items:center;gap:14px;font-size:16px;font-weight:650;letter-spacing:0.02em}\n      .menu{width:34px;height:34px;border:1px solid var(--line);border-radius:10px;display:inline-grid;place-items:center;background:var(--surface);color:var(--accent);text-decoration:none;font-size:18px}\n      .menu:hover,.menu:focus{background:rgba(143,169,200,0.12);outline:none}\n      .clock{color:var(--muted);font-size:14px}\n      main{width:min(1320px,calc(100vw - 32px));margin:0 auto;padding:22px 0 34px}\n      .hero{margin-bottom:16px;padding:18px 20px;background:linear-gradient(135deg,rgba(21,27,35,0.96),rgba(27,36,48,0.9));border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}\n      h1{margin:0;font-size:20px;font-weight:650}\n      .sub{margin:6px 0 0;color:var(--muted)}\n      .grid{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:14px}\n      .card{min-width:0;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:16px}\n      .card span{display:block;color:var(--muted);font-size:12px;letter-spacing:0.08em;text-transform:uppercase}\n      .card b{display:block;margin-top:6px;color:#f4f7fa;font-size:22px;font-weight:650;overflow-wrap:anywhere}\n      .panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden;margin-top:14px}\n      .panel h2{margin:0;padding:13px 15px;background:var(--head);font-size:14px;letter-spacing:0.06em;text-transform:uppercase}\n      table{width:100%;border-collapse:collapse}\n      th,td{padding:10px 14px;border-bottom:1px solid rgba(43,55,71,0.55);text-align:left}\n      th{color:#c9d4df;font-size:12px;text-transform:uppercase;letter-spacing:0.06em}\n      td:last-child,th:last-child{text-align:right}\n      .status{color:var(--muted)}.error{color:var(--warn)}\n      @media(max-width:900px){main{width:min(100vw - 20px,1320px);padding:12px 0 20px}.grid{grid-template-columns:repeat(2,minmax(130px,1fr))}.clock{display:none}}\n    </style>\n  </head>\n  <body>\n    <header class=\"topbar\">\n      <div class=\"brand\"><a class=\"menu\" href=\"/airframes-dashboard\" title=\"Back to dashboard\">←</a><span>airframes - stats</span></div>\n      <div class=\"clock\" id=\"clock\"></div>\n    </header>\n    <main>\n      <section class=\"hero\">\n        <h1>stored ACARS message stats</h1>\n        <p class=\"sub\">Counts from /mnt/ssl/acars. Refreshes every 10 s.</p>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>messages</span><b id=\"messages\">-</b></div>\n        <div class=\"card\"><span>valid json</span><b id=\"validJson\">-</b></div>\n        <div class=\"card\"><span>invalid json</span><b id=\"invalidJson\">-</b></div>\n        <div class=\"card\"><span>status</span><b id=\"status\">loading</b></div>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>earliest</span><b id=\"earliest\">-</b></div>\n        <div class=\"card\"><span>latest</span><b id=\"latest\">-</b></div>\n        <div class=\"card\"><span>acars-decoded (TS)</span><b id=\"acarsDecoded\">-</b></div>\n        <div class=\"card\"><span>libacars decoded</span><b id=\"libacarsDecoded\">-</b></div>\n      </section>\n      <section class=\"grid\">\n        <div class=\"card\"><span>labels</span><b id=\"labelCount\">-</b></div>\n        <div class=\"card\"><span>sources</span><b id=\"sourceCount\">-</b></div>\n      </section>\n      <section class=\"panel\"><h2>by label</h2><table><thead><tr><th>label</th><th>messages</th></tr></thead><tbody id=\"labelRows\"></tbody></table></section>\n      <section class=\"panel\"><h2>by source</h2><table><thead><tr><th>source</th><th>messages</th></tr></thead><tbody id=\"sourceRows\"></tbody></table></section>\n      <p class=\"status\" id=\"updated\"></p>\n    </main>\n    <script>\n      const fmt = new Intl.NumberFormat();\n      function esc(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));}\n      function setText(id,value){document.getElementById(id).textContent=value??'-';}\n      function rowsFromObject(obj){\n        return Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]||String(a[0]).localeCompare(String(b[0])))\n          .map(([k,c])=>`<tr><td>${esc(k)}</td><td>${fmt.format(c)}</td></tr>`).join('');\n      }\n      async function loadStats(){\n        try{\n          const res=await fetch('/airframes/stats',{cache:'no-store'});\n          if(!res.ok) throw new Error(res.status+' '+res.statusText);\n          const s=await res.json();\n          setText('messages',fmt.format(s.messages));\n          setText('validJson',fmt.format(s.valid_json));\n          setText('invalidJson',fmt.format(s.invalid_json));\n          setText('earliest',s.earliest_timestamp||'-');\n          setText('latest',s.latest_timestamp||'-');\n          setText('acarsDecoded',fmt.format(s.acars_decoded_count||0));\n          setText('libacarsDecoded',fmt.format(s.libacars_decoded_count||0));\n          setText('labelCount',Object.keys(s.by_label||{}).length);\n          setText('sourceCount',Object.keys(s.by_source||{}).length);\n          document.getElementById('labelRows').innerHTML=rowsFromObject(s.by_label);\n          document.getElementById('sourceRows').innerHTML=rowsFromObject(s.by_source);\n          setText('status','live');\n          document.getElementById('status').className='';\n          document.getElementById('updated').textContent='updated '+new Date().toISOString();\n        }catch(err){\n          setText('status','error');\n          document.getElementById('status').className='error';\n          document.getElementById('updated').textContent=String(err.message||err);\n        }\n      }\n      function tick(){document.getElementById('clock').textContent='UTC '+new Date().toISOString().replace('T',' ').slice(11,19)+' '+new Date().toISOString().slice(0,10);}\n      setInterval(loadStats,10000);\n      setInterval(tick,1000);\n      tick();\n      loadStats();\n    </script>\n  </body>\n</html>",
-    "output": "str",
-    "x": 390,
-    "y": 880,
-    "wires": [
-      [
-        "airframes-stats-page-response"
-      ]
-    ]
-  },
-  {
-    "id": "airframes-stats-page-response",
-    "type": "http response",
-    "z": "airframes-tab",
-    "name": "Stats page response",
-    "statusCode": "200",
-    "headers": {
-      "content-type": "text/html; charset=utf-8"
+    {
+        "id": "airframes-http-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "POST /airframes",
+        "url": "/airframes",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 340,
+        "y": 120,
+        "wires": [
+            [
+                "airframes-json"
+            ]
+        ]
     },
-    "x": 650,
-    "y": 880,
-    "wires": []
-  }
+    {
+        "id": "airframes-json",
+        "type": "json",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Parse JSON",
+        "property": "payload",
+        "action": "obj",
+        "pretty": false,
+        "x": 530,
+        "y": 120,
+        "wires": [
+            [
+                "airframes-normalize"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-normalize",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Normalize, cache and route",
+        "func": "const DROP_ACARS_LABELS = ['_d'];\nconst LIBACARS_LABELS = ['A6', 'AA', 'B6', 'BA', 'H1', 'SA', 'MA'];\n\nfunction looksLikeAirframesEvent(v) {\n  return v && typeof v === 'object' && (v.id || v.timestamp || v.station || v.airframe || v.source);\n}\n\nfunction extractEvent(v) {\n  if (!v || typeof v !== 'object') return {};\n  if (looksLikeAirframesEvent(v)) return v;\n  for (const k of ['payload', 'event', 'message', 'data']) {\n    if (looksLikeAirframesEvent(v[k])) return v[k];\n  }\n  return v;\n}\n\nfunction response(payload) {\n  return {\n    req: msg.req,\n    res: msg.res,\n    statusCode: 200,\n    headers: { 'content-type': 'application/json' },\n    payload\n  };\n}\n\nfunction inferDirection(event) {\n  const d = String(event.link_direction || '').toLowerCase();\n  if (['u', 'uplink', 'ground-to-air', 'ground_to_air'].includes(d)) return 'u';\n  if (['d', 'downlink', 'air-to-ground', 'air_to_ground'].includes(d)) return 'd';\n  return 'd';\n}\n\nfunction shellQuote(v) {\n  return \"'\" + String(v).replace(/'/g, \"'\\\\''\") + \"'\";\n}\n\n// ── Extract & normalize ────────────────────────────────────────────\nconst envelope = msg.payload || {};\nconst event = extractEvent(envelope);\n\nconst labelRaw = String(event.label || '').trim();\nconst label = labelRaw.toLowerCase();\n\nif (DROP_ACARS_LABELS.includes(label)) {\n  return [null, null,\n    response({ ok: true, dropped: true, reason: 'acars_label', label: event.label, id: event.id }),\n    null, null, null\n  ];\n}\n\nconst flight   = event.flight   || {};\nconst airframe = event.airframe || {};\nconst station  = event.station  || {};\nconst now = new Date().toISOString();\n\nconst normalized = {\n  received_at:   now,\n  id:            event.id,\n  timestamp:     event.timestamp || event.created_at || now,\n  station:       station.ident,\n  country:       station.country_code,\n  flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n  airframe_icao: airframe.icao,\n  tail:          airframe.tail || event.tail,\n  military:      airframe.military,\n  source:        event.source,\n  source_type:   event.source_type,\n  frequency:     event.frequency,\n  label:         event.label,\n  mode:          event.mode,\n  text:          event.text,\n  raw:           event\n};\n\n// ── Seed flow cache ────────────────────────────────────────────────\nlet recent = flow.get('airframes_recent') || [];\nconst key = normalized.id || (normalized.timestamp + '-' + normalized.station + '-' + normalized.text);\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(normalized);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// ── Outputs ────────────────────────────────────────────────────────\n// Output 1: Debug\nconst debugMsg = { payload: normalized };\n\n// Output 2: Write base record to JSONL (ONE write per ingested message)\nconst fileMsg = { payload: JSON.stringify(normalized) };\n\n// Output 3: HTTP response\nconst responseMsg = response({ ok: true, id: normalized.id, received_at: normalized.received_at });\n\n// Output 4: libacars (solo labels válidos)\nconst libacarsLabel = labelRaw.toUpperCase();\nconst libacarsMsg = (\n  LIBACARS_LABELS.includes(libacarsLabel) && normalized.text\n) ? {\n  payload: inferDirection(event) + ' ' + shellQuote(libacarsLabel) + ' ' + shellQuote(normalized.text),\n  normalized,\n  libacars_meta: { label: libacarsLabel, direction: inferDirection(event) }\n} : null;\n\n// Output 5: acars-decoder-typescript\nconst acarsDecoderMsg = (normalized.label && normalized.text) ? { payload: normalized, normalized } : null;\n\n// Output 6: API lookup (validación estricta ICAO)\nconst apiLookupMsg = (\n  normalized.airframe_icao && /^[A-F0-9]{6}$/i.test(normalized.airframe_icao)\n) ? { payload: normalized, normalized } : null;\n\nreturn [debugMsg, fileMsg, responseMsg, libacarsMsg, acarsDecoderMsg, apiLookupMsg];",
+        "outputs": 6,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 770,
+        "y": 120,
+        "wires": [
+            [
+                "airframes-debug"
+            ],
+            [
+                "airframes-file"
+            ],
+            [
+                "airframes-response"
+            ],
+            [
+                "airframes-libacars-exec"
+            ],
+            [
+                "airframes-acars-decoder"
+            ],
+            [
+                "airframes-api-auto-fetch"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-debug",
+        "type": "debug",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Airframes event",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1080,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "airframes-file",
+        "type": "file",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Append JSONL",
+        "filename": "/mnt/ssl/acars",
+        "filenameType": "str",
+        "appendNewline": true,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 1080,
+        "y": 140,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "airframes-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "200 OK",
+        "statusCode": "",
+        "headers": {},
+        "x": 1060,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "airframes-libacars-exec",
+        "type": "exec",
+        "z": "59cf6c9ce7d654ea",
+        "command": "LA_JSON=1 /usr/local/bin/decode_acars_apps",
+        "addpay": "payload",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "8",
+        "winHide": false,
+        "oldrc": false,
+        "name": "decode_acars_apps JSON",
+        "x": 1120,
+        "y": 200,
+        "wires": [
+            [
+                "airframes-libacars-parse"
+            ],
+            [
+                "airframes-libacars-stderr"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "airframes-libacars-parse",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Attach libacars decode",
+        "func": "// FIX: No longer writes to file directly.\n// Calls airframes-merge-and-persist which does a deep-merge append.\n\nconst meta   = msg.libacars_meta || {};\nconst stdout = String(msg.payload || '').trim();\n\nif (!stdout) return null;\n\nfunction parseLibacarsOutput(output) {\n  try { return JSON.parse(output); } catch (_) {}\n  const lines = output.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\n  for (let i = lines.length - 1; i >= 0; i--) {\n    const line = lines[i];\n    if (!line.startsWith('{') && !line.startsWith('[')) continue;\n    try { return JSON.parse(line); } catch (_) {}\n  }\n  return output;\n}\n\nconst decoded = parseLibacarsOutput(stdout);\nconst base    = msg.normalized || {};\n\n// Update flow cache\nlet recent = flow.get('airframes_recent') || [];\nconst key = base.id || (base.timestamp + '-' + base.station + '-' + base.text);\nconst existing = recent.find(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k === key;\n});\n\nconst enriched = {\n  ...(existing || base),\n  libacars: {\n    ok: true,\n    label:     meta.label,\n    direction: meta.direction,\n    decoded,\n    decoder: 'libacars'\n  }\n};\n\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// Pass to merge-and-persist (NOT directly to file)\nreturn { payload: enriched, normalized: enriched };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1400,
+        "y": 180,
+        "wires": [
+            [
+                "airframes-merge-and-persist"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-libacars-stderr",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Format libacars stderr",
+        "func": "const stderr = String(msg.payload||'').trim();\nif (!stderr) return null;\nmsg.payload = { libacars_error: stderr, id: msg.normalized?.id,\n  label: msg.libacars_meta?.label, direction: msg.libacars_meta?.direction };\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1400,
+        "y": 220,
+        "wires": [
+            [
+                "airframes-debug"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-acars-decoder",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "acars-decoder-typescript decode",
+        "func": "// FIX: No longer writes to file directly.\n// Calls airframes-merge-and-persist which does a deep-merge append.\n\nconst normalized = msg.normalized || msg.payload || {};\nconst event      = normalized.raw || {};\n\nconst label  = String(normalized.label  || event.label  || '').trim().toUpperCase();\nconst text   = String(normalized.text   || event.text   || '').trim();\nconst tail   = String(normalized.tail   || event.tail   || '').trim();\nconst flight = String(normalized.flight || '').trim();\n\nif (!label || !text) return null;\n\nlet decoded = null;\ntry {\n  const { MessageDecoder } = AcarsDecoder;\n  const decoder = new MessageDecoder();\n  const msgObj = { label, text };\n  if (tail)   msgObj.tail   = tail;\n  if (flight) msgObj.flight = flight;\n  decoded = decoder.decode(msgObj);\n} catch (err) {\n  node.warn('acars-decoder error [' + label + ']: ' + (err.message || String(err)));\n}\n\nif (!decoded) return null;\n\nconst base = msg.normalized || {};\n\n// Update flow cache\nlet recent = flow.get('airframes_recent') || [];\nconst key = base.id || (base.timestamp + '-' + base.station + '-' + base.text);\nconst existing = recent.find(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k === key;\n});\n\nconst enriched = {\n  ...(existing || base),\n  acars_decoded: {\n    ok: true,\n    label,\n    decoded,\n    decoder: 'acars-decoder-typescript'\n  }\n};\n\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// Pass to merge-and-persist (NOT directly to file)\nreturn { payload: enriched, normalized: enriched };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "AcarsDecoder",
+                "module": "@airframes/acars-decoder"
+            }
+        ],
+        "x": 1140,
+        "y": 260,
+        "wires": [
+            [
+                "airframes-merge-and-persist"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-auto-fetch",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Auto-fetch airframes API on arrival",
+        "func": "const normalized = msg.normalized || msg.payload || {};\nconst icao = String(normalized.airframe_icao || '').trim().toUpperCase();\n\nif (!icao || !/^[A-F0-9]{6}$/.test(icao)) return null;\n\nmsg.url       = 'https://api.airframes.io/airframes/icao/' + encodeURIComponent(icao);\nmsg.method    = 'GET';\nmsg.headers   = { accept: 'application/json' };\nmsg.normalized = normalized;\nmsg.icao       = icao;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1140,
+        "y": 320,
+        "wires": [
+            [
+                "airframes-api-auto-request"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-auto-request",
+        "type": "http request",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Fetch api.airframes.io (auto)",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1440,
+        "y": 320,
+        "wires": [
+            [
+                "airframes-api-auto-enrich"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-auto-enrich",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Enrich event with API data & persist",
+        "func": "// FIX: No longer writes to file directly.\n// Calls airframes-merge-and-persist which does a deep-merge append.\n\nconst normalized = msg.normalized || {};\nconst icao    = msg.icao || normalized.airframe_icao;\nconst base    = msg.normalized || {};\nconst apiData = msg.payload || {};\n\n// Update flow cache\nlet recent = flow.get('airframes_recent') || [];\nconst key = base.id || (base.timestamp + '-' + base.station + '-' + base.text);\nconst existing = recent.find(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k === key;\n});\n\nconst enriched = {\n  ...(existing || base),\n  airframes_api: {\n    ...apiData,\n    icao,\n    fetched_at: new Date().toISOString(),\n    ok: msg.statusCode < 400\n  }\n};\n\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// Pass to merge-and-persist (NOT directly to file)\nreturn { payload: enriched, normalized: enriched };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1740,
+        "y": 320,
+        "wires": [
+            [
+                "airframes-merge-and-persist",
+                "airframes-debug"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-merge-and-persist",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Merge enrichment & append to JSONL",
+        "func": "// ─────────────────────────────────────────────────────────────────\n// MERGE-AND-PERSIST\n// Called by: libacars-parse, acars-decoder, api-auto-enrich\n//\n// Purpose: append an \"enrichment patch\" line to the JSONL file.\n// The Build-events reader will deep-merge all lines sharing the\n// same key, so no decoder output is ever overwritten.\n//\n// Each line written here is a partial record that contains:\n//   _key        – dedup key (id or timestamp-station-text)\n//   _patch_type – which decoder produced this line ('libacars' | 'acars' | 'api')\n//   <enrichment field> – only the new data (libacars / acars_decoded / airframes_api)\n//\n// The base record (all normalized fields) is already written by\n// the normalize node → airframes-file, so we only persist the delta.\n// ─────────────────────────────────────────────────────────────────\n\nconst enriched = msg.normalized || msg.payload || {};\n\nconst key = enriched.id ||\n  (enriched.timestamp + '-' + enriched.station + '-' + enriched.text);\n\n// Determine which new field is present and build a minimal patch\nlet patchType = 'unknown';\nconst patch = { _key: key, _patch: true };\n\nif (enriched.libacars) {\n  patchType = 'libacars';\n  patch.libacars = enriched.libacars;\n}\nif (enriched.acars_decoded) {\n  patchType = patchType === 'unknown' ? 'acars' : patchType + '+acars';\n  patch.acars_decoded = enriched.acars_decoded;\n}\nif (enriched.airframes_api) {\n  patchType = patchType === 'unknown' ? 'api' : patchType + '+api';\n  patch.airframes_api = enriched.airframes_api;\n}\n\n// Only write if there is something to persist\nif (patchType === 'unknown') return null;\n\npatch._patch_type = patchType;\n\nreturn { payload: JSON.stringify(patch) };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1730,
+        "y": 80,
+        "wires": [
+            [
+                "airframes-file"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-css-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes-static/dashboard.css",
+        "url": "/airframes-static/dashboard.css",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 400,
+        "y": 460,
+        "wires": [
+            [
+                "airframes-css-read"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-css-read",
+        "type": "file in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Read CSS",
+        "filename": "/mnt/ssl/static/dashboard.css",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 660,
+        "y": 460,
+        "wires": [
+            [
+                "airframes-css-resp"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-css-resp",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "CSS response",
+        "statusCode": "200",
+        "headers": {
+            "content-type": "text/css; charset=utf-8",
+            "cache-control": "public, max-age=300"
+        },
+        "x": 860,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "airframes-js-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes-static/dashboard.js",
+        "url": "/airframes-static/dashboard.js",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 400,
+        "y": 520,
+        "wires": [
+            [
+                "airframes-js-read"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-js-read",
+        "type": "file in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Read JS",
+        "filename": "/mnt/ssl/static/dashboard.js",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 660,
+        "y": 520,
+        "wires": [
+            [
+                "airframes-js-resp"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-js-resp",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "JS response",
+        "statusCode": "200",
+        "headers": {
+            "content-type": "application/javascript; charset=utf-8",
+            "cache-control": "public, max-age=300"
+        },
+        "x": 850,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "airframes-dashboard-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes-dashboard",
+        "url": "airframes-dashboard",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 370,
+        "y": 580,
+        "wires": [
+            [
+                "cf4b8a4c1c05482a"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-dashboard-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Dashboard response",
+        "statusCode": "200",
+        "headers": {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "public, max-age=300"
+        },
+        "x": 880,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "airframes-events-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes/events",
+        "url": "/airframes/events",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 360,
+        "y": 700,
+        "wires": [
+            [
+                "airframes-file-in"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-file-in",
+        "type": "file in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Read JSONL",
+        "filename": "/mnt/ssl/acars",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "none",
+        "allProps": false,
+        "x": 650,
+        "y": 700,
+        "wires": [
+            [
+                "airframes-events-build"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-events-build",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Build events JSON",
+        "func": "// ─────────────────────────────────────────────────────────────────\n// BUILD EVENTS JSON  (deep-merge strategy)\n//\n// The JSONL file now contains two kinds of lines:\n//   1. Base records   – written by normalize (no _patch field)\n//   2. Patch records  – written by merge-and-persist (_patch: true)\n//\n// We read ALL lines, group by key, then deep-merge base + all patches\n// in arrival order so no enrichment field is ever lost.\n// ─────────────────────────────────────────────────────────────────\n\nfunction normalizeRecord(record) {\n  if (!record || typeof record !== 'object') return null;\n  // Already normalized shape\n  if (record.raw || record.received_at || record.airframe_icao) return record;\n\n  // Legacy shape from older code (nested flight/airframe/station)\n  const flight   = record.flight   || {};\n  const airframe = record.airframe || {};\n  const station  = record.station  || {};\n\n  return {\n    received_at:   record.received_at,\n    id:            record.id,\n    timestamp:     record.timestamp || record.created_at,\n    station:       station.ident,\n    country:       station.country_code,\n    flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n    airframe_icao: airframe.icao,\n    tail:          airframe.tail || record.tail,\n    military:      airframe.military,\n    source:        record.source,\n    source_type:   record.source_type,\n    frequency:     record.frequency,\n    label:         record.label,\n    mode:          record.mode,\n    text:          record.text,\n    raw:           record\n  };\n}\n\nfunction recordKey(r) {\n  return r.id || (r.timestamp + '-' + r.station + '-' + r.text);\n}\n\nconst limit = Math.max(\n  1,\n  Math.min(parseInt(msg.req?.query?.limit || '100', 10) || 100, 2000)\n);\n\nconst lines = String(msg.payload || '')\n  .split(/\\r?\\n/)\n  .filter(Boolean);\n\n// Pass 1 – collect all records in file order\nconst bases   = new Map();   // key → base record\nconst patches = new Map();   // key → array of patch objects\n\nfor (const line of lines) {\n  try {\n    const parsed = JSON.parse(line);\n    if (!parsed || typeof parsed !== 'object') continue;\n\n    if (parsed._patch) {\n      // Patch line – store by _key\n      const k = parsed._key;\n      if (!k) continue;\n      if (!patches.has(k)) patches.set(k, []);\n      patches.get(k).push(parsed);\n    } else {\n      // Base line\n      const norm = normalizeRecord(parsed);\n      if (!norm) continue;\n      const k = recordKey(norm);\n      // Later base lines overwrite earlier ones (re-ingestion edge case)\n      bases.set(k, norm);\n    }\n  } catch (_) {\n    // ignore corrupt lines\n  }\n}\n\n// Pass 2 – merge patches onto bases and collect latest `limit` keys\n// We want the most-recent `limit` unique keys. Since bases is a Map\n// (insertion-order), iterate it in reverse.\nconst baseKeys  = [...bases.keys()];\nconst selected  = baseKeys.slice(-limit).reverse(); // newest first\n\nconst results = [];\nfor (const k of selected) {\n  const base   = bases.get(k);\n  const pList  = patches.get(k) || [];\n\n  // Deep merge: apply patches in order\n  let merged = { ...base };\n  for (const p of pList) {\n    if (p.libacars)      merged.libacars      = p.libacars;\n    if (p.acars_decoded) merged.acars_decoded = p.acars_decoded;\n    if (p.airframes_api) merged.airframes_api = p.airframes_api;\n  }\n  results.push(merged);\n}\n\nmsg.headers = {\n  'content-type': 'application/json; charset=utf-8',\n  'cache-control': 'no-store'\n};\nmsg.payload = JSON.stringify(results);\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 870,
+        "y": 700,
+        "wires": [
+            [
+                "airframes-events-response"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-events-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Events response",
+        "statusCode": "200",
+        "headers": {},
+        "x": 1150,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "airframes-api-icao-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes/api/icao/:icao",
+        "url": "/airframes/api/icao/:icao",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 380,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-build"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-build",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Build airframes API request",
+        "func": "const icao = String(msg.req?.params?.icao||'').trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n  msg.statusCode = 400;\n  msg.headers    = { 'content-type':'application/json; charset=utf-8' };\n  msg.payload    = { error:'invalid_icao', icao };\n  return [null, msg];\n}\nmsg.url     = 'https://api.airframes.io/airframes/icao/' + encodeURIComponent(icao);\nmsg.method  = 'GET';\nmsg.headers = { accept:'application/json' };\nreturn [msg, null];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 640,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-request"
+            ],
+            [
+                "airframes-api-icao-response"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-request",
+        "type": "http request",
+        "z": "59cf6c9ce7d654ea",
+        "name": "api.airframes.io icao lookup",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 960,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-format"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-format",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Format airframes API response",
+        "func": "msg.headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };\nif (msg.statusCode && msg.statusCode >= 400) {\n  msg.payload = { error:'airframes_api_error', statusCode:msg.statusCode, response:msg.payload };\n}\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1290,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-response",
+                "airframes-api-debug"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Airframe API response",
+        "statusCode": "",
+        "headers": {},
+        "x": 1300,
+        "y": 1000,
+        "wires": []
+    },
+    {
+        "id": "airframes-api-debug",
+        "type": "debug",
+        "z": "59cf6c9ce7d654ea",
+        "name": "airframes API request",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1300,
+        "y": 860,
+        "wires": []
+    },
+    {
+        "id": "airframes-stats-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes/stats",
+        "url": "/airframes/stats",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 350,
+        "y": 760,
+        "wires": [
+            [
+                "airframes-stats-file-in"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-stats-file-in",
+        "type": "file in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Read ACARS stats file",
+        "filename": "/mnt/ssl/acars",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "none",
+        "allProps": false,
+        "x": 680,
+        "y": 760,
+        "wires": [
+            [
+                "airframes-stats-build"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-stats-build",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Build ACARS stats",
+        "func": "// FIX: stats now account for base + patch lines separately.\n// Patch lines (_patch:true) are NOT counted as messages but DO\n// contribute to the decoded/api counters.\n\nconst content = String(msg.payload||'');\nconst lines   = content.split(/\\r?\\n/).filter(l => l.trim());\n\nlet validJson = 0, invalidJson = 0;\nlet acarsDecodedCount = 0, libacarsDecodedCount = 0, apiCachedCount = 0;\nconst byLabel = {}, bySource = {};\nlet latestTimestamp = null, earliestTimestamp = null;\n\n// Track which keys already have each enrichment (avoid double-counting\n// if there are multiple patch lines for the same key)\nconst seenAcars    = new Set();\nconst seenLibacars = new Set();\nconst seenApi      = new Set();\n\nfor (const line of lines) {\n  try {\n    const event = JSON.parse(line);\n    validJson++;\n\n    if (event._patch) {\n      // Patch line – only update enrichment counters\n      const k = event._key || '__unknown__';\n      if (event.acars_decoded?.ok  && !seenAcars.has(k))    { acarsDecodedCount++;    seenAcars.add(k); }\n      if (event.libacars?.ok       && !seenLibacars.has(k)) { libacarsDecodedCount++; seenLibacars.add(k); }\n      if (event.airframes_api      && !seenApi.has(k))      { apiCachedCount++;       seenApi.add(k); }\n      continue;\n    }\n\n    // Base line\n    const label     = event.label     || event.raw?.label     || 'unknown';\n    const source    = event.source    || event.raw?.source    || 'unknown';\n    const timestamp = event.timestamp || event.raw?.timestamp;\n\n    // Enrich counters on base lines too (older files pre-patch-strategy)\n    const k = event.id || (event.timestamp + '-' + event.station + '-' + event.text);\n    if (event.acars_decoded?.ok  && !seenAcars.has(k))    { acarsDecodedCount++;    seenAcars.add(k); }\n    if (event.libacars?.ok       && !seenLibacars.has(k)) { libacarsDecodedCount++; seenLibacars.add(k); }\n    if (event.airframes_api      && !seenApi.has(k))      { apiCachedCount++;       seenApi.add(k); }\n\n    byLabel[label]   = (byLabel[label]  || 0) + 1;\n    bySource[source] = (bySource[source]|| 0) + 1;\n\n    if (timestamp) {\n      if (!latestTimestamp   || timestamp > latestTimestamp)   latestTimestamp   = timestamp;\n      if (!earliestTimestamp || timestamp < earliestTimestamp) earliestTimestamp = timestamp;\n    }\n  } catch (_) { invalidJson++; }\n}\n\nmsg.headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };\nmsg.payload = JSON.stringify({\n  file:                  '/mnt/ssl/acars',\n  messages:             validJson - (seenAcars.size + seenLibacars.size + seenApi.size - Object.keys(byLabel).reduce((a,k)=>a+byLabel[k],0) < 0 ? 0 : 0),\n  // simple: count only base lines\n  base_lines:           Object.values(byLabel).reduce((a, v) => a + v, 0),\n  patch_lines:          validJson - Object.values(byLabel).reduce((a, v) => a + v, 0),\n  valid_json:           validJson,\n  invalid_json:         invalidJson,\n  acars_decoded_count:  acarsDecodedCount,\n  libacars_decoded_count: libacarsDecodedCount,\n  api_cached_count:     apiCachedCount,\n  earliest_timestamp:   earliestTimestamp,\n  latest_timestamp:     latestTimestamp,\n  by_label:             byLabel,\n  by_source:            bySource\n});\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 910,
+        "y": 760,
+        "wires": [
+            [
+                "airframes-stats-response"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-stats-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Stats response",
+        "statusCode": "200",
+        "headers": {},
+        "x": 1140,
+        "y": 760,
+        "wires": []
+    },
+    {
+        "id": "airframes-stats-page-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes-stats",
+        "url": "/airframes-stats",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 350,
+        "y": 640,
+        "wires": [
+            [
+                "airframes-stats-page-template"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-stats-page-template",
+        "type": "template",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Stats page HTML",
+        "field": "payload",
+        "fieldType": "msg",
+        "format": "handlebars",
+        "syntax": "mustache",
+        "template": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <meta name=\"theme-color\" content=\"#0d1117\">\n  <title>airframes stats</title>\n  <link rel=\"stylesheet\" href=\"/airframes-static/dashboard.css\">\n  <style>\n    .hero{margin-bottom:16px;padding:18px 20px;background:linear-gradient(135deg,rgba(21,27,35,.96),rgba(27,36,48,.9));border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow)}\n    h1{margin:0;font-size:20px;font-weight:650}\n    .sub{margin:6px 0 0;color:var(--muted)}\n    .grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin-bottom:12px}\n    .card{min-width:0;padding:13px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md)}\n    .card span{display:block;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}\n    .card b{display:block;margin-top:5px;color:#f4f7fa;font-size:21px;font-weight:650;overflow-wrap:anywhere}\n    .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow);overflow:hidden;margin-top:12px}\n    .panel h2{margin:0;padding:12px 14px;background:var(--head);font-size:13px;letter-spacing:.06em;text-transform:uppercase}\n    table{width:100%;border-collapse:collapse}\n    th,td{padding:9px 13px;border-bottom:1px solid rgba(43,55,71,.5);text-align:left;font-size:13px}\n    th{color:#c9d4df;font-size:11px;text-transform:uppercase;letter-spacing:.06em}\n    td:last-child,th:last-child{text-align:right}\n    .status-ok{color:var(--muted)}.error{color:var(--gold)}\n    @media(max-width:768px){.grid{grid-template-columns:repeat(2,1fr)}}\n  </style>\n</head>\n<body>\n<header class=\"topbar\">\n  <a class=\"brand\" href=\"/airframes-dashboard\">\n    <span class=\"menu-btn\" aria-label=\"Dashboard\">&#8592;</span>\n    <span>airframes &mdash; stats</span>\n  </a>\n  <div class=\"clock\" id=\"clock\"></div>\n</header>\n<main>\n  <section class=\"hero\">\n    <h1>stored ACARS message stats</h1>\n    <p class=\"sub\">Counts from /mnt/ssl/acars &middot; refreshes every 10 s</p>\n  </section>\n  <section class=\"grid\">\n    <div class=\"card\"><span>messages</span><b id=\"messages\">-</b></div>\n    <div class=\"card\"><span>valid JSON</span><b id=\"validJson\">-</b></div>\n    <div class=\"card\"><span>patch lines</span><b id=\"patchLines\">-</b></div>\n    <div class=\"card\"><span>status</span><b id=\"status\">loading</b></div>\n  </section>\n  <section class=\"grid\">\n    <div class=\"card\"><span>earliest</span><b id=\"earliest\">-</b></div>\n    <div class=\"card\"><span>latest</span><b id=\"latest\">-</b></div>\n    <div class=\"card\"><span>TS decoded</span><b id=\"acarsDecoded\">-</b></div>\n    <div class=\"card\"><span>LA decoded</span><b id=\"libacarsDecoded\">-</b></div>\n  </section>\n  <section class=\"grid\">\n    <div class=\"card\"><span>API cached</span><b id=\"apiCached\">-</b></div>\n    <div class=\"card\"><span>labels</span><b id=\"labelCount\">-</b></div>\n    <div class=\"card\"><span>sources</span><b id=\"sourceCount\">-</b></div>\n  </section>\n  <section class=\"panel\"><h2>by label</h2><table><thead><tr><th>label</th><th>messages</th></tr></thead><tbody id=\"labelRows\"></tbody></table></section>\n  <section class=\"panel\"><h2>by source</h2><table><thead><tr><th>source</th><th>messages</th></tr></thead><tbody id=\"sourceRows\"></tbody></table></section>\n  <p class=\"status-ok\" id=\"updated\"></p>\n</main>\n<script>\n  const fmt=new Intl.NumberFormat();\n  function esc(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));}\n  function setText(id,v){const el=document.getElementById(id);if(el)el.textContent=v??'-';}\n  function rowsFrom(obj){return Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))).map(([k,c])=>`<tr><td>${esc(k)}</td><td>${fmt.format(c)}</td></tr>`).join('');}\n  async function loadStats(){\n    try{\n      const r=await fetch('/airframes/stats',{cache:'no-store'});\n      if(!r.ok)throw new Error(r.status+' '+r.statusText);\n      const s=await r.json();\n      setText('messages',fmt.format(s.base_lines));\n      setText('validJson',fmt.format(s.valid_json));\n      setText('patchLines',fmt.format(s.patch_lines));\n      setText('earliest',s.earliest_timestamp||'-');\n      setText('latest',s.latest_timestamp||'-');\n      setText('acarsDecoded',fmt.format(s.acars_decoded_count||0));\n      setText('libacarsDecoded',fmt.format(s.libacars_decoded_count||0));\n      setText('apiCached',fmt.format(s.api_cached_count||0));\n      setText('labelCount',Object.keys(s.by_label||{}).length);\n      setText('sourceCount',Object.keys(s.by_source||{}).length);\n      document.getElementById('labelRows').innerHTML=rowsFrom(s.by_label);\n      document.getElementById('sourceRows').innerHTML=rowsFrom(s.by_source);\n      setText('status','live');\n      document.getElementById('status').className='status-ok';\n      document.getElementById('updated').textContent='updated '+new Date().toISOString();\n    }catch(err){\n      setText('status','error');\n      document.getElementById('status').className='error';\n      document.getElementById('updated').textContent=String(err.message||err);\n    }\n  }\n  function tick(){const n=new Date();document.getElementById('clock').textContent='UTC '+n.toISOString().replace('T',' ').slice(11,19)+' '+n.toISOString().slice(0,10);}\n  setInterval(loadStats,10000);\n  setInterval(tick,1000);\n  tick();loadStats();\n</script>\n</body>\n</html>",
+        "output": "str",
+        "x": 670,
+        "y": 640,
+        "wires": [
+            [
+                "airframes-stats-page-response"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-stats-page-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Stats page response",
+        "statusCode": "200",
+        "headers": {
+            "content-type": "text/html; charset=utf-8"
+        },
+        "x": 900,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "cf4b8a4c1c05482a",
+        "type": "file in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Read HTML",
+        "filename": "/mnt/ssl/static/dashboard.html",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 650,
+        "y": 580,
+        "wires": [
+            [
+                "airframes-dashboard-response"
+            ]
+        ]
+    }
 ]
