@@ -13,7 +13,10 @@
         <span class="menu-btn" aria-label="Stats">&#8801;</span>
         <span>airframes &mdash; stream</span>
       </a>
-      <div class="clock" id="clock"></div>
+      <div class="topbar-actions">
+        <button id="fullscreenBtn" class="menu-btn" type="button" aria-label="Pantalla completa" title="Pantalla completa">⛶</button>
+        <div class="clock" id="clock"></div>
+      </div>
     </header>
 
     <main>
@@ -25,9 +28,6 @@
         </div>
         <div class="stat">
           <b id="libacarsCount">&mdash;</b><span>LA decoded</span>
-        </div>
-        <div class="stat">
-          <b id="apiCount">&mdash;</b><span>API cached</span>
         </div>
       </section>
 
@@ -46,7 +46,6 @@
           <option value="all">all messages</option>
           <option value="acars">TS decoded</option>
           <option value="libacars">LA decoded</option>
-          <option value="api">API cached</option>
           <option value="any">any decoded</option>
         </select>
         <select id="limit">

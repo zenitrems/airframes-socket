@@ -90,7 +90,11 @@ body {
   color: var(--muted);
   font-size: 13px;
 }
-
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 /* ── Layout ──────────────────────────────────────────────────────────────── */
 main {
   max-width: 1600px;

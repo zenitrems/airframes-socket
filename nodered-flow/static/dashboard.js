@@ -29,6 +29,7 @@ const acarsDecoderJson = document.getElementById('acarsDecoderJson');
 const loadAirframeApiBtn = document.getElementById('loadAirframeApi');
 const airframeApiStatus = document.getElementById('airframeApiStatus');
 const airframeApiJson = document.getElementById('airframeApiJson');
+const fullscreenBtn = document.getElementById('fullscreenBtn');
 
 // ── Utilities ──────────────────────────────────────────────────────────────
 function esc(v) {
@@ -276,7 +277,6 @@ function render() {
   document.getElementById('last').textContent = latestTime ? formatTime(latestTime) : '-';
   document.getElementById('decodedCount').textContent = events.filter(e => e.acars_decoded?.ok).length;
   document.getElementById('libacarsCount').textContent = events.filter(e => e.libacars?.ok).length;
-  document.getElementById('apiCount').textContent = events.filter(e => e.airframes_api).length;
 }
 
 // ── Data load ──────────────────────────────────────────────────────────────
@@ -322,7 +322,53 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Escape') closeDetails();
 });
 
-// ── Boot ───────────────────────────────────────────────────────────────────
+function isFullscreenActive() {
+  return !!(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement ||
+    document.msFullscreenElement
+  );
+}
+
+function updateFullscreenButton() {
+  if (!fullscreenBtn) return;
+  const active = isFullscreenActive();
+  fullscreenBtn.textContent = active ? '⤢' : '⛶';
+  fullscreenBtn.title = active ? 'Salir de pantalla completa' : 'Pantalla completa';
+}
+
+async function toggleFullscreen() {
+  if (!fullscreenBtn) return;
+  try {
+    if (isFullscreenActive()) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+      else if (document.mozCancelFullScreen) await document.mozCancelFullScreen();
+      else if (document.msExitFullscreen) await document.msExitFullscreen();
+    } else {
+      const el = document.documentElement;
+      if (el.requestFullscreen) await el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      else if (el.mozRequestFullScreen) await el.mozRequestFullScreen();
+      else if (el.msRequestFullscreen) await el.msRequestFullscreen();
+    }
+  } catch (err) {
+    console.warn('Fullscreen toggle failed', err);
+  }
+}
+
+document.addEventListener('fullscreenchange', updateFullscreenButton);
+document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+document.addEventListener('mozfullscreenchange', updateFullscreenButton);
+document.addEventListener('MSFullscreenChange', updateFullscreenButton);
+
+if (fullscreenBtn) {
+  fullscreenBtn.addEventListener('click', toggleFullscreen);
+  updateFullscreenButton();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
 setInterval(load, 3000);
 setInterval(tick, 1000);
 tick();
