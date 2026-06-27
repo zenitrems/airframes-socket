@@ -28,7 +28,6 @@ from src.helpers import (
 )
 from src.nodeRedPipe import NodeRedPipe
 
-
 DEFAULT_NODE_RED_URL = "https://host:1880/airframes"
 FILTERS = {}
 
@@ -292,6 +291,7 @@ def main():
         "https://ws.airframes.io",
         transports=["websocket"],
         socketio_path="socket.io",
+        auth={"apikey": ""},
         retry=True,
         wait_timeout=10,
     )

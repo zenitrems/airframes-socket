@@ -97,13 +97,13 @@
         "type": "file",
         "z": "59cf6c9ce7d654ea",
         "name": "Append JSONL",
-        "filename": "/mnt/ssl/acars",
+        "filename": "/mnt/nfs_client/airframes-node-red/acarsdb",
         "filenameType": "str",
         "appendNewline": true,
-        "createDir": false,
+        "createDir": true,
         "overwriteFile": "false",
         "encoding": "utf8",
-        "x": 1080,
+        "x": 1100,
         "y": 140,
         "wires": [
             []
@@ -316,7 +316,7 @@
         "type": "file in",
         "z": "59cf6c9ce7d654ea",
         "name": "Read CSS",
-        "filename": "/mnt/ssl/static/dashboard.css",
+        "filename": "/mnt/nfs_client/airframes-node-red/static/dashboard.css",
         "filenameType": "str",
         "format": "utf8",
         "chunk": false,
@@ -367,7 +367,7 @@
         "type": "file in",
         "z": "59cf6c9ce7d654ea",
         "name": "Read JS",
-        "filename": "/mnt/ssl/static/dashboard.js",
+        "filename": "/mnt/nfs_client/airframes-node-red/static/dashboard.js",
         "filenameType": "str",
         "format": "utf8",
         "chunk": false,
@@ -449,7 +449,7 @@
         "type": "file in",
         "z": "59cf6c9ce7d654ea",
         "name": "Read JSONL",
-        "filename": "/mnt/ssl/acars",
+        "filename": "/mnt/nfs_client/airframes-node-red/acarsdb",
         "filenameType": "str",
         "format": "utf8",
         "chunk": false,
@@ -496,119 +496,6 @@
         "wires": []
     },
     {
-        "id": "airframes-api-icao-in",
-        "type": "http in",
-        "z": "59cf6c9ce7d654ea",
-        "name": "GET /airframes/api/icao/:icao",
-        "url": "/airframes/api/icao/:icao",
-        "method": "get",
-        "upload": false,
-        "swaggerDoc": "",
-        "x": 380,
-        "y": 920,
-        "wires": [
-            [
-                "airframes-api-icao-build"
-            ]
-        ]
-    },
-    {
-        "id": "airframes-api-icao-build",
-        "type": "function",
-        "z": "59cf6c9ce7d654ea",
-        "name": "Build airframes API request",
-        "func": "const icao = String(msg.req?.params?.icao||'').trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n  msg.statusCode = 400;\n  msg.headers    = { 'content-type':'application/json; charset=utf-8' };\n  msg.payload    = { error:'invalid_icao', icao };\n  return [null, msg];\n}\nmsg.url     = 'https://api.airframes.io/airframes/icao/' + encodeURIComponent(icao);\nmsg.method  = 'GET';\nmsg.headers = { accept:'application/json' };\nreturn [msg, null];",
-        "outputs": 2,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 640,
-        "y": 920,
-        "wires": [
-            [
-                "airframes-api-icao-request"
-            ],
-            [
-                "airframes-api-icao-response"
-            ]
-        ]
-    },
-    {
-        "id": "airframes-api-icao-request",
-        "type": "http request",
-        "z": "59cf6c9ce7d654ea",
-        "name": "api.airframes.io icao lookup",
-        "method": "use",
-        "ret": "obj",
-        "paytoqs": "ignore",
-        "url": "",
-        "tls": "",
-        "persist": false,
-        "proxy": "",
-        "insecureHTTPParser": false,
-        "authType": "",
-        "senderr": false,
-        "headers": [],
-        "x": 960,
-        "y": 920,
-        "wires": [
-            [
-                "airframes-api-icao-format"
-            ]
-        ]
-    },
-    {
-        "id": "airframes-api-icao-format",
-        "type": "function",
-        "z": "59cf6c9ce7d654ea",
-        "name": "Format airframes API response",
-        "func": "msg.headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };\nif (msg.statusCode && msg.statusCode >= 400) {\n  msg.payload = { error:'airframes_api_error', statusCode:msg.statusCode, response:msg.payload };\n}\nreturn msg;",
-        "outputs": 1,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 1290,
-        "y": 920,
-        "wires": [
-            [
-                "airframes-api-icao-response",
-                "airframes-api-debug"
-            ]
-        ]
-    },
-    {
-        "id": "airframes-api-icao-response",
-        "type": "http response",
-        "z": "59cf6c9ce7d654ea",
-        "name": "Airframe API response",
-        "statusCode": "",
-        "headers": {},
-        "x": 1300,
-        "y": 1000,
-        "wires": []
-    },
-    {
-        "id": "airframes-api-debug",
-        "type": "debug",
-        "z": "59cf6c9ce7d654ea",
-        "name": "airframes API request",
-        "active": false,
-        "tosidebar": true,
-        "console": false,
-        "tostatus": false,
-        "complete": "payload",
-        "targetType": "msg",
-        "statusVal": "",
-        "statusType": "auto",
-        "x": 1300,
-        "y": 860,
-        "wires": []
-    },
-    {
         "id": "airframes-stats-in",
         "type": "http in",
         "z": "59cf6c9ce7d654ea",
@@ -630,7 +517,7 @@
         "type": "file in",
         "z": "59cf6c9ce7d654ea",
         "name": "Read ACARS stats file",
-        "filename": "/mnt/ssl/acars",
+        "filename": "/mnt/nfs_client/airframes-node-red/acarsdb",
         "filenameType": "str",
         "format": "utf8",
         "chunk": false,
@@ -650,7 +537,7 @@
         "type": "function",
         "z": "59cf6c9ce7d654ea",
         "name": "Build ACARS stats",
-        "func": "// FIX: stats now account for base + patch lines separately.\n// Patch lines (_patch:true) are NOT counted as messages but DO\n// contribute to the decoded/api counters.\n\nconst content = String(msg.payload||'');\nconst lines   = content.split(/\\r?\\n/).filter(l => l.trim());\n\nlet validJson = 0, invalidJson = 0;\nlet acarsDecodedCount = 0, libacarsDecodedCount = 0, apiCachedCount = 0;\nconst byLabel = {}, bySource = {};\nlet latestTimestamp = null, earliestTimestamp = null;\n\n// Track which keys already have each enrichment (avoid double-counting\n// if there are multiple patch lines for the same key)\nconst seenAcars    = new Set();\nconst seenLibacars = new Set();\nconst seenApi      = new Set();\n\nfor (const line of lines) {\n  try {\n    const event = JSON.parse(line);\n    validJson++;\n\n    if (event._patch) {\n      // Patch line – only update enrichment counters\n      const k = event._key || '__unknown__';\n      if (event.acars_decoded?.ok  && !seenAcars.has(k))    { acarsDecodedCount++;    seenAcars.add(k); }\n      if (event.libacars?.ok       && !seenLibacars.has(k)) { libacarsDecodedCount++; seenLibacars.add(k); }\n      if (event.airframes_api      && !seenApi.has(k))      { apiCachedCount++;       seenApi.add(k); }\n      continue;\n    }\n\n    // Base line\n    const label     = event.label     || event.raw?.label     || 'unknown';\n    const source    = event.source    || event.raw?.source    || 'unknown';\n    const timestamp = event.timestamp || event.raw?.timestamp;\n\n    // Enrich counters on base lines too (older files pre-patch-strategy)\n    const k = event.id || (event.timestamp + '-' + event.station + '-' + event.text);\n    if (event.acars_decoded?.ok  && !seenAcars.has(k))    { acarsDecodedCount++;    seenAcars.add(k); }\n    if (event.libacars?.ok       && !seenLibacars.has(k)) { libacarsDecodedCount++; seenLibacars.add(k); }\n    if (event.airframes_api      && !seenApi.has(k))      { apiCachedCount++;       seenApi.add(k); }\n\n    byLabel[label]   = (byLabel[label]  || 0) + 1;\n    bySource[source] = (bySource[source]|| 0) + 1;\n\n    if (timestamp) {\n      if (!latestTimestamp   || timestamp > latestTimestamp)   latestTimestamp   = timestamp;\n      if (!earliestTimestamp || timestamp < earliestTimestamp) earliestTimestamp = timestamp;\n    }\n  } catch (_) { invalidJson++; }\n}\n\nmsg.headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };\nmsg.payload = JSON.stringify({\n  file:                  '/mnt/ssl/acars',\n  messages:             validJson - (seenAcars.size + seenLibacars.size + seenApi.size - Object.keys(byLabel).reduce((a,k)=>a+byLabel[k],0) < 0 ? 0 : 0),\n  // simple: count only base lines\n  base_lines:           Object.values(byLabel).reduce((a, v) => a + v, 0),\n  patch_lines:          validJson - Object.values(byLabel).reduce((a, v) => a + v, 0),\n  valid_json:           validJson,\n  invalid_json:         invalidJson,\n  acars_decoded_count:  acarsDecodedCount,\n  libacars_decoded_count: libacarsDecodedCount,\n  api_cached_count:     apiCachedCount,\n  earliest_timestamp:   earliestTimestamp,\n  latest_timestamp:     latestTimestamp,\n  by_label:             byLabel,\n  by_source:            bySource\n});\nreturn msg;",
+        "func": "// FIX: stats now account for base + patch lines separately.\n// Patch lines (_patch:true) are NOT counted as messages but DO\n// contribute to the decoded/api counters.\n\nconst content = String(msg.payload||'');\nconst lines   = content.split(/\\r?\\n/).filter(l => l.trim());\n\nlet validJson = 0, invalidJson = 0;\nlet acarsDecodedCount = 0, libacarsDecodedCount = 0, apiCachedCount = 0;\nconst byLabel = {}, bySource = {};\nlet latestTimestamp = null, earliestTimestamp = null;\n\n// Track which keys already have each enrichment (avoid double-counting\n// if there are multiple patch lines for the same key)\nconst seenAcars    = new Set();\nconst seenLibacars = new Set();\nconst seenApi      = new Set();\n\nfor (const line of lines) {\n  try {\n    const event = JSON.parse(line);\n    validJson++;\n\n    if (event._patch) {\n      // Patch line – only update enrichment counters\n      const k = event._key || '__unknown__';\n      if (event.acars_decoded?.ok  && !seenAcars.has(k))    { acarsDecodedCount++;    seenAcars.add(k); }\n      if (event.libacars?.ok       && !seenLibacars.has(k)) { libacarsDecodedCount++; seenLibacars.add(k); }\n      if (event.airframes_api      && !seenApi.has(k))      { apiCachedCount++;       seenApi.add(k); }\n      continue;\n    }\n\n    // Base line\n    const label     = event.label     || event.raw?.label     || 'unknown';\n    const source    = event.source    || event.raw?.source    || 'unknown';\n    const timestamp = event.timestamp || event.raw?.timestamp;\n\n    // Enrich counters on base lines too (older files pre-patch-strategy)\n    const k = event.id || (event.timestamp + '-' + event.station + '-' + event.text);\n    if (event.acars_decoded?.ok  && !seenAcars.has(k))    { acarsDecodedCount++;    seenAcars.add(k); }\n    if (event.libacars?.ok       && !seenLibacars.has(k)) { libacarsDecodedCount++; seenLibacars.add(k); }\n    if (event.airframes_api      && !seenApi.has(k))      { apiCachedCount++;       seenApi.add(k); }\n\n    byLabel[label]   = (byLabel[label]  || 0) + 1;\n    bySource[source] = (bySource[source]|| 0) + 1;\n\n    if (timestamp) {\n      if (!latestTimestamp   || timestamp > latestTimestamp)   latestTimestamp   = timestamp;\n      if (!earliestTimestamp || timestamp < earliestTimestamp) earliestTimestamp = timestamp;\n    }\n  } catch (_) { invalidJson++; }\n}\n\nmsg.headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };\nmsg.payload = JSON.stringify({\n  file:                  '/mnt/nfs_client/airframes-node-red/acarsdb',\n  messages:             validJson - (seenAcars.size + seenLibacars.size + seenApi.size - Object.keys(byLabel).reduce((a,k)=>a+byLabel[k],0) < 0 ? 0 : 0),\n  // simple: count only base lines\n  base_lines:           Object.values(byLabel).reduce((a, v) => a + v, 0),\n  patch_lines:          validJson - Object.values(byLabel).reduce((a, v) => a + v, 0),\n  valid_json:           validJson,\n  invalid_json:         invalidJson,\n  acars_decoded_count:  acarsDecodedCount,\n  libacars_decoded_count: libacarsDecodedCount,\n  api_cached_count:     apiCachedCount,\n  earliest_timestamp:   earliestTimestamp,\n  latest_timestamp:     latestTimestamp,\n  by_label:             byLabel,\n  by_source:            bySource\n});\nreturn msg;",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -730,7 +617,7 @@
         "type": "file in",
         "z": "59cf6c9ce7d654ea",
         "name": "Read HTML",
-        "filename": "/mnt/ssl/static/dashboard.html",
+        "filename": "/mnt/nfs_client/airframes-node-red/static/dashboard.html",
         "filenameType": "str",
         "format": "utf8",
         "chunk": false,
@@ -744,5 +631,120 @@
                 "airframes-dashboard-response"
             ]
         ]
+    },
+    {
+        "id": "airframes-api-icao-in",
+        "type": "http in",
+        "z": "59cf6c9ce7d654ea",
+        "name": "GET /airframes/api/icao/:icao",
+        "url": "/airframes/api/icao/:icao",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 380,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-build",
+                "airframes-api-debug"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-build",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Build airframes API request",
+        "func": "const icao = String(msg.req?.params?.icao||'').trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n  msg.statusCode = 400;\n  msg.headers    = { 'content-type':'application/json; charset=utf-8' };\n  msg.payload    = { error:'invalid_icao', icao };\n  return [null, msg];\n}\nmsg.url = 'https://api.airframes.io/airframes/icao/' + encodeURIComponent(icao);\nmsg.method  = 'GET';\nmsg.headers = { accept:'application/json' };\nreturn [msg, null];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 680,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-request",
+                "airframes-api-debug"
+            ],
+            [
+                "airframes-api-icao-response"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-request",
+        "type": "http request",
+        "z": "59cf6c9ce7d654ea",
+        "name": " ICAO lookup request",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 960,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-format"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-format",
+        "type": "function",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Format API response",
+        "func": "msg.headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };\nif (msg.statusCode && msg.statusCode >= 400) {\n  msg.payload = { error:'airframes_api_error', statusCode:msg.statusCode, response:msg.payload };\n}\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1260,
+        "y": 920,
+        "wires": [
+            [
+                "airframes-api-icao-response",
+                "airframes-api-debug"
+            ]
+        ]
+    },
+    {
+        "id": "airframes-api-icao-response",
+        "type": "http response",
+        "z": "59cf6c9ce7d654ea",
+        "name": "Airframe API response",
+        "statusCode": "",
+        "headers": {},
+        "x": 1300,
+        "y": 1000,
+        "wires": []
+    },
+    {
+        "id": "airframes-api-debug",
+        "type": "debug",
+        "z": "59cf6c9ce7d654ea",
+        "name": "ICAO lookup API request",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1310,
+        "y": 860,
+        "wires": []
     }
 ]
