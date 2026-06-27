@@ -72,3 +72,6 @@ From there, messages can be stored, shown in dashboards, decoded, counted, or us
 - `--inline-summary` is useful for compact terminal logs.
 - Set `AIRFRAMES_API_KEY` or pass `--api-key` for the authenticated feed.
 - If you use HTTPS with untrusted certificates in Node-RED, you may need `--node-red-insecure-tls`.
+## TODO
+
+- Libacars and acars-decoder-typescript decoding 
