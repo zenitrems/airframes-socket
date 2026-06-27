@@ -1,25 +1,22 @@
 #!/usr/bin/env python3.11
+# type: ignore
 """
+Command-line Socket.IO client for the airframes.io live stream.
 
-A command-line WEBSOCKET client for airframes.io that connects to the live message stream, applies user-defined filters, and prints matching messages in a readable format. It also supports sending filtered messages to a Node-RED endpoint for further processing.
-Usage examples:
-    # Print all messages with a summary format
-    python socket_client.py --summary
-
-    # Print messages from US stations in an inline summary format
-    python socket_client.py --filter station.country_code=US --inline-summary
-
-    # Send messages for flights with ICAO code UAL123 to Node-RED without local printing
-    python socket_client.py --filter flight.flight_icao=UAL123 --node-red-url https://host:1880/airframes --node-red-only
-
+Supported stream modes:
+    sniff   sampled global message firehose via messages:sniff
+    feed    authenticated per-account station feed via API key
+    station live monitor for one station id
 """
 
 import argparse
 import json
+import os
 import signal
+
 import socketio
+
 from src.helpers import (
-    get_nested_value,
     parse_filters,
     matches_filters,
     inline_summary,
@@ -28,6 +25,7 @@ from src.helpers import (
 )
 from src.nodeRedPipe import NodeRedPipe
 
+DEFAULT_SOCKET_URL = "https://ws.airframes.io"
 DEFAULT_NODE_RED_URL = "https://host:1880/airframes"
 FILTERS = {}
 
@@ -50,78 +48,93 @@ def summarize_message(data):
         return json.dumps({"event": "message", "payload": data}, ensure_ascii=False)
 
     station = data.get("station") or {}
-    flight = {
-        "flight": get_nested_value(data, "flight.flight"),
-        "flight_icao": get_nested_value(data, "flight.flight_icao"),
-        "flight_iata": get_nested_value(data, "flight.flight_iata"),
-    }
-    airframe = {
-        "icao": get_nested_value(data, "airframe.icao"),
-        "tail": get_nested_value(data, "airframe.tail"),
-        "model": get_nested_value(data, "airframe.manufacturer_model"),
-        "owner": get_nested_value(data, "airframe.owner"),
-    }
-
-    message_data = {
-        "message_number": data.get("message_number"),
-        "data": data.get("data"),
-        "text": data.get("text"),
-        "departing_airport": data.get("departing_airport"),
-        "destination_airport": data.get("destination_airport"),
-        "latitude": data.get("latitude"),
-        "longitude": data.get("longitude"),
-        "altitude": data.get("altitude"),
-        "ar_uuid": data.get("ar_uuid"),
-        "ar_version": data.get("ar_version"),
-        "block_end": data.get("block_end"),
-    }
-    source_info = {
-        "source": data.get("source"),
-        "link_direction": data.get("link_direction"),
-        "from_hex": data.get("from_hex"),
-        "to_hex": data.get("to_hex"),
-        "error": data.get("error"),
-        "mode": data.get("mode"),
-        "label": data.get("label"),
-        "block_id": data.get("block_id"),
-        "ack": data.get("ack"),
-    }
+    flight = data.get("flight") or {}
+    airframe = data.get("airframe") or {}
 
     summary = {
         "id": data.get("id"),
         "timestamp": data.get("timestamp"),
         "station": (station.get("ident"), station.get("country_code")),
-        "flight": flight,
-        "airframe": airframe,
-        "source_info": source_info,
-        "mesage_data": message_data,
+        "flight": {
+            "flight": flight.get("flight"),
+            "flight_icao": flight.get("flight_icao"),
+            "flight_iata": flight.get("flight_iata"),
+        },
+        "airframe": {
+            "icao": airframe.get("icao"),
+            "tail": airframe.get("tail"),
+            "model": airframe.get("manufacturer_model"),
+            "owner": airframe.get("owner"),
+        },
+        "source_info": {
+            "source": data.get("source"),
+            "source_type": data.get("source_type"),
+            "link_direction": data.get("link_direction"),
+            "label": data.get("label"),
+            "mode": data.get("mode"),
+            "frequency": data.get("frequency"),
+        },
+        "message_data": {
+            "message_number": data.get("message_number"),
+            "text": data.get("text"),
+            "block_end": data.get("block_end"),
+        },
     }
 
     return json.dumps(summary, ensure_ascii=False, indent=2)
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="airframes.io WEBSOCKET client")
+    parser = argparse.ArgumentParser(description="airframes.io Socket.IO client")
+    parser.add_argument(
+        "--stream",
+        choices=("auto", "sniff", "feed", "station"),
+        default="auto",
+        help=(
+            "Stream mode. auto uses station when --station-id is provided, "
+            "feed when --api-key is provided, otherwise sniff. Default: auto."
+        ),
+    )
+    parser.add_argument(
+        "--socket-url",
+        default=DEFAULT_SOCKET_URL,
+        help=f"Socket.IO endpoint. Default: {DEFAULT_SOCKET_URL}",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("AIRFRAMES_API_KEY"),
+        help="Airframes API key for the unsampled per-account feed. Can also be set with AIRFRAMES_API_KEY.",
+    )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("AIRFRAMES_TOKEN"),
+        help="JWT for app/user session authentication. Can also be set with AIRFRAMES_TOKEN.",
+    )
+    parser.add_argument(
+        "--station-id",
+        type=int,
+        help="Station id for station monitor mode.",
+    )
     parser.add_argument(
         "--filter",
         action="append",
         default=[],
         help=(
-            "Add a filter in the format field=value. You can specify multiple filters by repeating this argument. "
-            "Values can be comma-separated for multiple matches. For example: --filter station.country_code=US,CA --filter flight.flight_icao=UAL123"
+            "Add a filter in the format field=value. Repeat this argument for multiple filters. "
+            "Values can be comma-separated. Example: --filter station.country_code=US,CA"
         ),
     )
     parser.add_argument(
         "--summary",
         action="store_true",
-        help="Prints a short summary of the message instead of the complete JSON payload.",
+        help="Print a short JSON summary instead of the complete payload.",
     )
     parser.add_argument(
         "--inline-summary",
         "--inline_sumary",
         dest="inline_summary",
         action="store_true",
-        help="Prints each message as a single table-like log line.",
+        help="Print each message as a single table-like log line.",
     )
     parser.add_argument(
         "--inline-width",
@@ -175,7 +188,33 @@ def build_parser():
     return parser
 
 
+def resolve_stream_mode(args, parser):
+    if args.stream == "auto":
+        if args.station_id is not None:
+            return "station"
+        if args.api_key:
+            return "feed"
+        return "sniff"
+
+    if args.stream == "feed" and not args.api_key:
+        parser.error("--stream feed requires --api-key or AIRFRAMES_API_KEY")
+    if args.stream == "station" and args.station_id is None:
+        parser.error("--stream station requires --station-id")
+    return args.stream
+
+
+def build_auth_payload(args):
+    auth = {}
+    if args.api_key:
+        auth["apiKey"] = args.api_key
+    if args.token:
+        auth["token"] = args.token
+    return auth or None
+
+
 def register_handlers(
+    stream_mode,
+    station_id=None,
     summary_mode=False,
     inline_summary_mode=False,
     inline_width=None,
@@ -184,9 +223,37 @@ def register_handlers(
 ):
     printed_inline_header = False
 
+    def process_message(data):
+        nonlocal printed_inline_header
+
+        if not matches_filters(data, FILTERS):
+            return
+
+        if node_red_pipe:
+            node_red_pipe.send(data)
+
+        if node_red_only:
+            return
+
+        if inline_summary_mode:
+            if not printed_inline_header:
+                print(inline_summary_header(inline_width))
+                print(inline_summary_separator(inline_width))
+                printed_inline_header = True
+            print(inline_summary(data, inline_width))
+        elif summary_mode:
+            print(summarize_message(data))
+        else:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+            print("-" * 40)
+
     @sio.event
     def connect():
-        print("Listening")
+        print(f"Connected. Stream mode: {stream_mode}")
+        if stream_mode == "sniff":
+            sio.emit("messages:sniff")
+        elif stream_mode == "station":
+            sio.emit("station:monitor:start", station_id)
 
     @sio.event
     def connect_error(data):
@@ -216,36 +283,56 @@ def register_handlers(
     def disconnect():
         print("Disconnected from server")
 
-    @sio.event
-    def message(data):
-        nonlocal printed_inline_header
+    @sio.on("message")
+    def global_message(data):
+        process_message(data)
 
-        if not matches_filters(data, FILTERS):
+    @sio.on("messages:sniff:started")
+    def messages_sniff_started(data):
+        print("Global message sniff started:", json.dumps(data, ensure_ascii=False))
+
+    @sio.on("feed:authenticated")
+    def feed_authenticated(data):
+        stations = data.get("stations") if isinstance(data, dict) else None
+        station_count = len(stations or [])
+        print(f"Feed authenticated. Stations: {station_count}")
+
+    @sio.on("feed:message")
+    def feed_message(data):
+        process_message(data)
+
+    @sio.on("station:monitor:started")
+    def station_monitor_started(data):
+        print("Station monitor started:", json.dumps(data, ensure_ascii=False))
+
+    @sio.on("station:monitor:data")
+    def station_monitor_data(data):
+        if not isinstance(data, dict):
             return
+        for message in data.get("newMessages") or []:
+            process_message(message)
 
-        if node_red_pipe:
-            node_red_pipe.send(data)
+    @sio.on("station:monitor:stopped")
+    def station_monitor_stopped(data):
+        print("Station monitor stopped:", json.dumps(data, ensure_ascii=False))
 
-        if node_red_only:
-            return
+    @sio.on("feed:error")
+    def feed_error(data):
+        print("Feed error:", data)
 
-        if inline_summary_mode:
-            if not printed_inline_header:
-                print(inline_summary_header(inline_width))
-                print(inline_summary_separator(inline_width))
-                printed_inline_header = True
-            print(inline_summary(data, inline_width))
-        elif summary_mode:
-            print(summarize_message(data))
-        else:
-            print(json.dumps(data, ensure_ascii=False, indent=2))
-            print("-" * 40)
+    @sio.on("chat:error")
+    def chat_error(data):
+        print("Chat error:", data)
+
+    @sio.on("error")
+    def socket_error(data):
+        print("Socket error:", data)
 
 
 def keyboard_interrupt_handler(signal, frame):
     print("Keyboard interrupt received. Exiting...")
     sio.disconnect()
-    exit(0)
+    raise SystemExit(0)
 
 
 signal.signal(signal.SIGINT, keyboard_interrupt_handler)
@@ -254,7 +341,9 @@ signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 def main():
     global FILTERS
 
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    stream_mode = resolve_stream_mode(args, parser)
     FILTERS = parse_filters(args.filter)
     node_red_pipe = None
 
@@ -274,6 +363,8 @@ def main():
             print("Node-RED TLS verification is disabled")
 
     register_handlers(
+        stream_mode=stream_mode,
+        station_id=args.station_id,
         summary_mode=args.summary,
         inline_summary_mode=args.inline_summary,
         inline_width=args.inline_width,
@@ -287,11 +378,12 @@ def main():
             json.dumps({key: sorted(values) for key, values in FILTERS.items()}),
         )
 
+    auth = build_auth_payload(args)
     sio.connect(
-        "https://ws.airframes.io",
+        args.socket_url,
         transports=["websocket"],
         socketio_path="socket.io",
-        auth={"apikey": ""},
+        auth=auth,
         retry=True,
         wait_timeout=10,
     )
