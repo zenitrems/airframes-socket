@@ -36,6 +36,19 @@ python socket_client.py --filter airframe.icao=AE1453
 python socket_client.py --filter airframe.military=true
 ```
 
+
+Decode supported ACARS applications with libacars before printing or forwarding:
+
+```bash
+python socket_client.py --libacars --inline-summary
+```
+
+Send libacars-enriched events to Node-RED:
+
+```bash
+python socket_client.py --libacars --node-red-url https://host:1880/airframes --node-red-only
+```
+
 Send events to Node-RED:
 
 ```bash
@@ -71,7 +84,5 @@ From there, messages can be stored, shown in dashboards, decoded, counted, or us
 - You can repeat multiple `--filter` arguments.
 - `--inline-summary` is useful for compact terminal logs.
 - Set `AIRFRAMES_API_KEY` or pass `--api-key` for the authenticated feed.
+- `--libacars` uses `/usr/local/bin/decode_acars_apps` by default.
 - If you use HTTPS with untrusted certificates in Node-RED, you may need `--node-red-insecure-tls`.
-## TODO
-
-- Libacars and acars-decoder-typescript decoding 
