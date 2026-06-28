@@ -218,6 +218,60 @@ td.text-col {
   max-width: min(480px, 38vw);
   min-width: 120px;
 }
+td.summary-col {
+  white-space: normal;
+  word-break: break-word;
+  max-width: min(360px, 30vw);
+}
+.summary-body {
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.summary-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.event-meta td {
+  padding: 14px 16px;
+  background: rgba(16, 23, 32, 0.95);
+  border-bottom: 1px solid rgba(43, 55, 71, 0.6);
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.meta-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.meta-item b {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.row-summary {
+  padding: 12px;
+  background: #0b1118;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: #d4dce8;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.event-row td,
+.event-row th {
+  border-bottom: 1px solid rgba(43, 55, 71, 0.45);
+}
 td.icao-type {
   color: var(--gold);
   font-size: 12px;

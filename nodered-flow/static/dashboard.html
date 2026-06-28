@@ -67,8 +67,10 @@
               <th>flight</th>
               <th>tail</th>
               <th>label</th>
-              <th>decoded</th>
-              <th>text</th>
+              <th>mode</th>
+              <th>source</th>
+              <th>decoded summary</th>
+              <th>raw text</th>
               <th></th>
             </tr>
           </thead>
@@ -116,11 +118,18 @@ No acars-decoder result for this message.</pre
           </section>
 
           <section class="detail-section">
+            <h3>decoded summary</h3>
+            <div class="detail-field" style="padding: 12px; margin-bottom: 8px; background: #0f151d; border: 1px solid var(--line); border-radius: 11px;">
+              <span>summary</span>
+              <b id="decodedSummary" style="white-space: pre-wrap; word-break: break-word;">No decoded summary available.</b>
+            </div>
+          </section>
+
+          <section class="detail-section">
             <h3>libacars decode <span class="badge badge-la">LA</span></h3>
             <span class="api-status" id="libacarsStatus">not decoded</span>
             <pre class="json-view" id="libacarsJson">
-No libacars decode available for this message.</pre
-            >
+No libacars decode available for this message.</pre>
           </section>
 
           <section class="detail-section">
@@ -132,8 +141,7 @@ No libacars decode available for this message.</pre
               <span class="api-status" id="airframeApiStatus">not loaded</span>
             </div>
             <pre class="json-view" id="airframeApiJson">
-Press load airframe data to query api.airframes.io.</pre
-            >
+Press load airframe data to query api.airframes.io.</pre>
           </section>
 
           <section class="detail-section">

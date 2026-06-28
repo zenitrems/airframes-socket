@@ -45,8 +45,8 @@
         "type": "function",
         "z": "59cf6c9ce7d654ea",
         "name": "Normalize, cache and route",
-        "func": "const DROP_ACARS_LABELS = ['_d'];\nconst LIBACARS_LABELS = ['A6', 'AA', 'B6', 'BA', 'H1', 'SA', 'MA'];\n\nfunction looksLikeAirframesEvent(v) {\n  return v && typeof v === 'object' && (v.id || v.timestamp || v.station || v.airframe || v.source);\n}\n\nfunction extractEvent(v) {\n  if (!v || typeof v !== 'object') return {};\n  if (looksLikeAirframesEvent(v)) return v;\n  for (const k of ['payload', 'event', 'message', 'data']) {\n    if (looksLikeAirframesEvent(v[k])) return v[k];\n  }\n  return v;\n}\n\nfunction response(payload) {\n  return {\n    req: msg.req,\n    res: msg.res,\n    statusCode: 200,\n    headers: { 'content-type': 'application/json' },\n    payload\n  };\n}\n\nfunction inferDirection(event) {\n  const d = String(event.link_direction || '').toLowerCase();\n  if (['u', 'uplink', 'ground-to-air', 'ground_to_air'].includes(d)) return 'u';\n  if (['d', 'downlink', 'air-to-ground', 'air_to_ground'].includes(d)) return 'd';\n  return 'd';\n}\n\nfunction shellQuote(v) {\n  return \"'\" + String(v).replace(/'/g, \"'\\\\''\") + \"'\";\n}\n\n// ── Extract & normalize ────────────────────────────────────────────\nconst envelope = msg.payload || {};\nconst event = extractEvent(envelope);\n\nconst labelRaw = String(event.label || '').trim();\nconst label = labelRaw.toLowerCase();\n\nif (DROP_ACARS_LABELS.includes(label)) {\n  return [null, null,\n    response({ ok: true, dropped: true, reason: 'acars_label', label: event.label, id: event.id }),\n    null, null, null\n  ];\n}\n\nconst flight   = event.flight   || {};\nconst airframe = event.airframe || {};\nconst station  = event.station  || {};\nconst now = new Date().toISOString();\n\nconst normalized = {\n  received_at:   now,\n  id:            event.id,\n  timestamp:     event.timestamp || event.created_at || now,\n  station:       station.ident,\n  country:       station.country_code,\n  flight:        flight.flight_iata || flight.flight_icao || flight.flight,\n  airframe_icao: airframe.icao,\n  tail:          airframe.tail || event.tail,\n  military:      airframe.military,\n  source:        event.source,\n  source_type:   event.source_type,\n  frequency:     event.frequency,\n  label:         event.label,\n  mode:          event.mode,\n  text:          event.text,\n  raw:           event\n};\n\n// ── Seed flow cache ────────────────────────────────────────────────\nlet recent = flow.get('airframes_recent') || [];\nconst key = normalized.id || (normalized.timestamp + '-' + normalized.station + '-' + normalized.text);\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(normalized);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// ── Outputs ────────────────────────────────────────────────────────\n// Output 1: Debug\nconst debugMsg = { payload: normalized };\n\n// Output 2: Write base record to JSONL (ONE write per ingested message)\nconst fileMsg = { payload: JSON.stringify(normalized) };\n\n// Output 3: HTTP response\nconst responseMsg = response({ ok: true, id: normalized.id, received_at: normalized.received_at });\n\n// Output 4: libacars (solo labels válidos)\nconst libacarsLabel = labelRaw.toUpperCase();\nconst libacarsMsg = (\n  LIBACARS_LABELS.includes(libacarsLabel) && normalized.text\n) ? {\n  payload: inferDirection(event) + ' ' + shellQuote(libacarsLabel) + ' ' + shellQuote(normalized.text),\n  normalized,\n  libacars_meta: { label: libacarsLabel, direction: inferDirection(event) }\n} : null;\n\n// Output 5: acars-decoder-typescript\nconst acarsDecoderMsg = (normalized.label && normalized.text) ? { payload: normalized, normalized } : null;\n\n// Output 6: API lookup (validación estricta ICAO)\nconst apiLookupMsg = (\n  normalized.airframe_icao && /^[A-F0-9]{6}$/i.test(normalized.airframe_icao)\n) ? { payload: normalized, normalized } : null;\n\nreturn [debugMsg, fileMsg, responseMsg, libacarsMsg, acarsDecoderMsg, apiLookupMsg];",
-        "outputs": 6,
+        "func": "const DROP_ACARS_LABELS = ['']; /* _d */\nfunction looksLikeAirframesEvent(v) {\n  return v && typeof v === 'object' && (v.id || v.timestamp || v.station || v.airframe || v.source);\n}\n\nfunction extractEvent(v) {\n  if (!v || typeof v !== 'object') return {};\n  if (looksLikeAirframesEvent(v)) return v;\n  for (const k of ['payload', 'event', 'message', 'data']) {\n    if (looksLikeAirframesEvent(v[k])) return v[k];\n  }\n  return v;\n}\n\nfunction response(payload) {\n  return {\n    req: msg.req,\n    res: msg.res,\n    statusCode: 200,\n    headers: { 'content-type': 'application/json' },\n    payload\n  };\n}\n\n// ── Extract & normalize ────────────────────────────────────────────\nconst envelope = msg.payload || {};\nconst event = extractEvent(envelope);\n\nconst labelRaw = String(event.label || '').trim();\nconst label = labelRaw.toLowerCase();\n\nif (DROP_ACARS_LABELS.includes(label)) {\n  return [null, null,\n    response({ ok: true, dropped: true, reason: 'acars_label', label: event.label, id: event.id }),\n    null, null, null\n  ];\n}\n\nconst flight = event.flight || {};\nconst airframe = event.airframe || {};\nconst station = event.station || {};\nconst now = new Date().toISOString();\n\nconst normalized = {\n  received_at: now,\n  id: event.id,\n  timestamp: event.timestamp || event.created_at || now,\n  station: station.ident,\n  country: station.country_code,\n  flight: flight.flight_iata || flight.flight_icao || flight.flight,\n  airframe_icao: airframe.icao,\n  tail: airframe.tail || event.tail,\n  military: airframe.military,\n  source: event.source,\n  source_type: event.source_type,\n  frequency: event.frequency,\n  label: event.label,\n  mode: event.mode,\n  text: event.text,\n  decoded: event.decoded,\n  libacars: event.libacars,\n  acars_decoded: event.acars_decoded,\n  raw: event\n};\n\n// ── Seed flow cache ────────────────────────────────────────────────\nlet recent = flow.get('airframes_recent') || [];\nconst key = normalized.id || (normalized.timestamp + '-' + normalized.station + '-' + normalized.text);\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(normalized);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// ── Outputs ────────────────────────────────────────────────────────\n// Output 1: Debug\nconst debugMsg = { payload: normalized };\n\n// Output 2: Write base record to JSONL (ONE write per ingested message)\nconst fileMsg = { payload: JSON.stringify(normalized) };\n\n// Output 3: HTTP response\nconst responseMsg = response({ ok: true, id: normalized.id, received_at: normalized.received_at });\n\nconst acarsDecoderMsg = (normalized.label && normalized.text) ? { payload: normalized, normalized } : null;\n\n// Output 6: API lookup (validación estricta ICAO)\nconst apiLookupMsg = (\n  normalized.airframe_icao && /^[A-F0-9]{6}$/i.test(normalized.airframe_icao)\n) ? { payload: normalized, normalized } : null;\n\nreturn [debugMsg, fileMsg, responseMsg, acarsDecoderMsg, apiLookupMsg];",
+        "outputs": 5,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
@@ -63,9 +63,6 @@
             ],
             [
                 "airframes-response"
-            ],
-            [
-                "airframes-libacars-exec"
             ],
             [
                 "airframes-acars-decoder"
@@ -88,8 +85,8 @@
         "targetType": "msg",
         "statusVal": "",
         "statusType": "auto",
-        "x": 1080,
-        "y": 80,
+        "x": 1040,
+        "y": 40,
         "wires": []
     },
     {
@@ -103,8 +100,8 @@
         "createDir": true,
         "overwriteFile": "false",
         "encoding": "utf8",
-        "x": 1100,
-        "y": 140,
+        "x": 1040,
+        "y": 100,
         "wires": [
             []
         ]
@@ -119,70 +116,6 @@
         "x": 1060,
         "y": 380,
         "wires": []
-    },
-    {
-        "id": "airframes-libacars-exec",
-        "type": "exec",
-        "z": "59cf6c9ce7d654ea",
-        "command": "LA_JSON=1 /usr/local/bin/decode_acars_apps",
-        "addpay": "payload",
-        "append": "",
-        "useSpawn": "false",
-        "timer": "8",
-        "winHide": false,
-        "oldrc": false,
-        "name": "decode_acars_apps JSON",
-        "x": 1120,
-        "y": 200,
-        "wires": [
-            [
-                "airframes-libacars-parse"
-            ],
-            [
-                "airframes-libacars-stderr"
-            ],
-            []
-        ]
-    },
-    {
-        "id": "airframes-libacars-parse",
-        "type": "function",
-        "z": "59cf6c9ce7d654ea",
-        "name": "Attach libacars decode",
-        "func": "// FIX: No longer writes to file directly.\n// Calls airframes-merge-and-persist which does a deep-merge append.\n\nconst meta   = msg.libacars_meta || {};\nconst stdout = String(msg.payload || '').trim();\n\nif (!stdout) return null;\n\nfunction parseLibacarsOutput(output) {\n  try { return JSON.parse(output); } catch (_) {}\n  const lines = output.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\n  for (let i = lines.length - 1; i >= 0; i--) {\n    const line = lines[i];\n    if (!line.startsWith('{') && !line.startsWith('[')) continue;\n    try { return JSON.parse(line); } catch (_) {}\n  }\n  return output;\n}\n\nconst decoded = parseLibacarsOutput(stdout);\nconst base    = msg.normalized || {};\n\n// Update flow cache\nlet recent = flow.get('airframes_recent') || [];\nconst key = base.id || (base.timestamp + '-' + base.station + '-' + base.text);\nconst existing = recent.find(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k === key;\n});\n\nconst enriched = {\n  ...(existing || base),\n  libacars: {\n    ok: true,\n    label:     meta.label,\n    direction: meta.direction,\n    decoded,\n    decoder: 'libacars'\n  }\n};\n\nrecent = recent.filter(e => {\n  const k = e.id || (e.timestamp + '-' + e.station + '-' + e.text);\n  return k !== key;\n});\nrecent.unshift(enriched);\nrecent = recent.slice(0, 500);\nflow.set('airframes_recent', recent);\n\n// Pass to merge-and-persist (NOT directly to file)\nreturn { payload: enriched, normalized: enriched };",
-        "outputs": 1,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 1400,
-        "y": 180,
-        "wires": [
-            [
-                "airframes-merge-and-persist"
-            ]
-        ]
-    },
-    {
-        "id": "airframes-libacars-stderr",
-        "type": "function",
-        "z": "59cf6c9ce7d654ea",
-        "name": "Format libacars stderr",
-        "func": "const stderr = String(msg.payload||'').trim();\nif (!stderr) return null;\nmsg.payload = { libacars_error: stderr, id: msg.normalized?.id,\n  label: msg.libacars_meta?.label, direction: msg.libacars_meta?.direction };\nreturn msg;",
-        "outputs": 1,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 1400,
-        "y": 220,
-        "wires": [
-            [
-                "airframes-debug"
-            ]
-        ]
     },
     {
         "id": "airframes-acars-decoder",
@@ -655,7 +588,7 @@
         "type": "function",
         "z": "59cf6c9ce7d654ea",
         "name": "Build airframes API request",
-        "func": "const icao = String(msg.req?.params?.icao||'').trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n  msg.statusCode = 400;\n  msg.headers    = { 'content-type':'application/json; charset=utf-8' };\n  msg.payload    = { error:'invalid_icao', icao };\n  return [null, msg];\n}\nmsg.url = 'https://api.airframes.io/airframes/icao/' + encodeURIComponent(icao);\nmsg.method  = 'GET';\nmsg.headers = { accept:'application/json' };\nreturn [msg, null];",
+        "func": "const icao = String(msg.req?.params?.icao||'').trim().toUpperCase();\nif (!/^[A-F0-9]{6}$/.test(icao)) {\n  msg.statusCode = 400;\n  msg.headers    = { 'content-type':'application/json; charset=utf-8' };\n  msg.payload    = { error:'invalid_icao', icao };\n  return [null, msg];\n}\nmsg.url = 'https://api.airframes.io/airframes/icao/' + encodeURIComponent(icao);\nmsg.method  = 'GET';\nmsg.headers = { 'accept':'application/json; x-api-key: ' };\nreturn [msg, null];",
         "outputs": 2,
         "timeout": 0,
         "noerr": 0,

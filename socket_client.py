@@ -22,11 +22,17 @@ from src.helpers import (
     inline_summary,
     inline_summary_header,
     inline_summary_separator,
+    get_libacars_summary,
+)
+from src.libacars import (
+    DEFAULT_DECODER,
+    LibacarsDecodeError,
+    enrich_airframes_message,
 )
 from src.nodeRedPipe import NodeRedPipe
 
-DEFAULT_SOCKET_URL = "https://ws.airframes.io"
-DEFAULT_NODE_RED_URL = "https://host:1880/airframes"
+DEFAULT_SOCKET_URL = "https://ws.airframes.io" #PROD 
+DEFAULT_NODE_RED_URL = "https://localhost:1880/airframes"
 FILTERS = {}
 
 
@@ -185,6 +191,22 @@ def build_parser():
         "--node-red-ca-file",
         help="Path to a CA certificate bundle used to verify the Node-RED HTTPS certificate.",
     )
+    parser.add_argument(
+        "--libacars",
+        action="store_true",
+        help="Decode supported ACARS application messages with libacars before output/forwarding.",
+    )
+    parser.add_argument(
+        "--libacars-decoder",
+        default=DEFAULT_DECODER,
+        help=f"Path to decode_acars_apps. Default: {DEFAULT_DECODER}",
+    )
+    parser.add_argument(
+        "--libacars-timeout",
+        type=float,
+        default=5.0,
+        help="Timeout in seconds for each libacars decode. Default: 5.",
+    )
     return parser
 
 
@@ -220,6 +242,9 @@ def register_handlers(
     inline_width=None,
     node_red_pipe=None,
     node_red_only=False,
+    libacars_enabled=False,
+    libacars_decoder=DEFAULT_DECODER,
+    libacars_timeout=5.0,
 ):
     printed_inline_header = False
 
@@ -228,6 +253,23 @@ def register_handlers(
 
         if not matches_filters(data, FILTERS):
             return
+
+        if libacars_enabled:
+            try:
+                data = enrich_airframes_message(
+                    data,
+                    decoder=libacars_decoder,
+                    timeout=libacars_timeout,
+                )
+            except (LibacarsDecodeError, OSError, ValueError) as exc:
+                if isinstance(data, dict):
+                    data = {
+                        **data,
+                        "libacars": {
+                            "ok": False,
+                            "error": str(exc),
+                        },
+                    }
 
         if node_red_pipe:
             node_red_pipe.send(data)
@@ -370,6 +412,9 @@ def main():
         inline_width=args.inline_width,
         node_red_pipe=node_red_pipe,
         node_red_only=args.node_red_only,
+        libacars_enabled=args.libacars,
+        libacars_decoder=args.libacars_decoder,
+        libacars_timeout=args.libacars_timeout,
     )
 
     if FILTERS:
