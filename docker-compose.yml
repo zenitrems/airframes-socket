@@ -1,0 +1,12 @@
+services:
+  airframes-socket:
+    container_name: airframes-socket
+    image: airframes-socket:libacars
+    restart: no
+    environment:
+      - AIRFRAMES_API_KEY=${AIRFRAMES_API_KEY}
+      - FILTERS=airframe.military=true
+      - NODE_RED_URL=https://192.168.1.3:1880/airframes
+      - NODE_RED_INSECURE_TLS=true
+      - LIBACARS=true
+      - INLINE_SUMMARY=true

@@ -38,6 +38,10 @@ if [[ -n "${NODE_RED_URL:-}" ]]; then
   args+=("--node-red-url" "$NODE_RED_URL")
 fi
 
+if [[ "${NODE_RED_INSECURE_TLS:-}" =~ ^(1|true|yes)$ ]]; then
+  args+=("--node-red-insecure-tls")
+fi
+
 if [[ -n "${NODE_RED_TIMEOUT:-}" ]]; then
   args+=("--node-red-timeout" "$NODE_RED_TIMEOUT")
 fi
@@ -71,9 +75,8 @@ if [[ "${SUMMARY:-}" =~ ^(1|true|yes)$ ]]; then
 fi
 
 # The image is intended to run without libacars by default.
-# Do not enable libacars unless the binary is available in the container.
 if [[ "${LIBACARS:-}" =~ ^(1|true|yes)$ ]]; then
   args+=("--libacars")
 fi
 
-exec python main.py "${args[@]}" "$@"
+exec python3 main.py "${args[@]}" "$@"

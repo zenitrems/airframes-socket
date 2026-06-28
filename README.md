@@ -1,6 +1,17 @@
-# airframes-socket
+# airframes-socket-client
 
 A simple Socket.IO client for consuming the `airframes.io` live stream, filtering messages, and optionally forwarding them to Node-RED or another application.
+
+## Installation
+
+install requirements on a python virtual environment and if is needed, install `libacars`:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+# see https://github.com/szpajder/libacars for libacars build instructions
+```
 
 ## Basic usage
 

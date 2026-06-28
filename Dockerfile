@@ -1,5 +1,5 @@
 # Use the dev image to build and install dependencies.
-FROM dhi.io/python:3.12-dev AS builder
+FROM python:3.12-trixie AS builder
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 # Use the minimal runtime image. It runs as nonroot by default.
-FROM dhi.io/python:3.12
+FROM python:3.12-trixie
 
 WORKDIR /app
 
@@ -25,7 +25,40 @@ ENV PATH="/venv/bin:$PATH"
 # Copy the source code into the container.
 COPY . .
 
+# Build libacars only when explicitly requested:
+# docker build --build-arg INSTALL_LIBACARS=true -t airframes-socket .
+ARG INSTALL_LIBACARS=false
+RUN if [ "$INSTALL_LIBACARS" = "true" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libjansson-dev \
+        libxml2-dev \
+        zlib1g-dev \
+      && git clone --depth 1 https://github.com/szpajder/libacars.git /tmp/libacars \
+      && cmake -S /tmp/libacars -B /tmp/libacars/build -DCMAKE_BUILD_TYPE=Release \
+      && cmake --build /tmp/libacars/build --parallel \
+      && cmake --install /tmp/libacars/build \
+      && ldconfig \
+      && apt-get purge -y --auto-remove \
+        build-essential \
+        cmake \
+        git \
+        libjansson-dev \
+        libxml2-dev \
+        zlib1g-dev \
+      && apt-get install -y --no-install-recommends \
+        libjansson4 \
+        libxml2 \
+        zlib1g \
+      && rm -rf /var/lib/apt/lists/* /tmp/libacars; \
+    fi
+
+
 # Use a shell entrypoint to translate environment variables into CLI flags.
 RUN chmod +x /app/docker-entrypoint.sh
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["--help"]
+CMD []
