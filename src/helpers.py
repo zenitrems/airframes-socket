@@ -1,6 +1,8 @@
 import shutil
 import json
 
+from requests import get
+
 INLINE_COLUMN_SEPARATOR = " | "
 INLINE_MIN_TEXT_WIDTH = 12
 DEFAULT_INLINE_WIDTH = 120
@@ -8,7 +10,7 @@ INLINE_SUMMARY_BASE_COLUMNS = [
     ("time", 24, 19),
     ("station", 18, 12),
     ("cc", 2, 2),
-    ("flight", 8, 6),
+    ("flight", 6, 6),
     ("icao", 6, 6),
     ("tail", 8, 6),
     ("mil", 3, 3),
@@ -154,6 +156,53 @@ def inline_summary(data, max_width=None):
     if isinstance(military, bool):
         military = "Y" if military else "N"
 
+    libacars_ok = get_nested_value(data, "libacars.ok")
+    text_content = ""
+
+    if libacars_ok:
+        # Extract meaningful decoded information
+        label = get_nested_value(data, "libacars.label")
+        decoded = get_nested_value(data, "libacars.decoded")
+
+        if decoded:
+            if isinstance(decoded, dict):
+                # Extract key fields from decoded message
+                text_parts = []
+
+                # Common decoded fields to display
+                display_fields = [
+                    "message_type",
+                    "report_type",
+                    "aircraft_id",
+                    "position",
+                    "altitude",
+                    "flight_id",
+                    "status",
+                ]
+
+                for field in display_fields:
+                    if field in decoded:
+                        value = decoded[field]
+                        if value:
+                            text_parts.append(f"{field}={value}")
+
+                if text_parts:
+                    text_content = f"[{label}] " + " ".join(text_parts)
+                else:
+                    # Show decoded summary
+                    text_content = (
+                        f"[{label}] Decoded: "
+                        + json.dumps(decoded, ensure_ascii=False)[:80]
+                    )
+            else:
+                # If decoded is not a dict, show as string
+                text_content = f"[{label}] {str(decoded)[:80]}"
+    else:
+        # Show raw message text if no libacars decoding
+        text = data.get("text")
+        if text:
+            text_content = text[:80]
+
     values = {
         "time": data.get("timestamp"),
         "station": get_nested_value(data, "station.ident"),
@@ -166,9 +215,62 @@ def inline_summary(data, max_width=None):
         "icao": get_nested_value(data, "airframe.icao"),
         "tail": get_nested_value(data, "airframe.tail") or data.get("tail"),
         "mil": military,
-        "text": data.get("text"),
+        "text": text_content if text_content else data.get("text", ""),
     }
 
     return INLINE_COLUMN_SEPARATOR.join(
         format_table_value(values[column], width) for column, width in columns
     )
+
+
+def get_libacars_summary(message):
+    if not isinstance(message, dict):
+        return None
+
+    libacars = message.get("libacars")
+    if not libacars or not isinstance(libacars, dict):
+        return None
+
+    if not libacars.get("ok"):
+        error = libacars.get("error")
+        if error:
+            return f"Error: {error}"
+        return None
+
+    label = libacars.get("label", "")
+    decoded = libacars.get("decoded")
+
+    if not decoded:
+        return None
+
+
+    if isinstance(decoded, dict):
+        # Try to extract meaningful fields
+        summary_parts = []
+
+        # CPDLC position reports
+        if label in {"SA", "AA", "B6", "BA", "A6", "MA"}:
+            for key in ["position", "flight_id", "altitude", "flight_level"]:
+                if key in decoded and decoded[key]:
+                    summary_parts.append(f"{key}={decoded[key]}")
+
+        # ADS-C reports
+        elif label in {"S1", "S6"}:
+            for key in ["latitude", "longitude", "altitude", "ground_speed"]:
+                if key in decoded and decoded[key]:
+                    summary_parts.append(f"{key}={decoded[key]}")
+
+        # Generic key extraction
+        if not summary_parts:
+            for key in list(decoded.keys())[:3]:  # Show first 3 keys
+                value = decoded[key]
+                if value:
+                    summary_parts.append(f"{key}={str(value)[:20]}")
+
+        return (
+            f"[{label}] " + " ".join(summary_parts)
+            if summary_parts
+            else f"[{label}] decoded"
+        )
+
+    return f"[{label}] {str(decoded)[:50]}"
