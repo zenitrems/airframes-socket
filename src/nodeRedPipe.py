@@ -1,15 +1,15 @@
-import ssl
-import sys
-import threading
-import time
+import asyncio
+import contextlib
 import json
-import urllib.error
-import urllib.request
-import queue
+import sys
+import ssl
+import time
+
+import aiohttp
 
 
 class NodeRedPipe:
-    """A thread-safe, non-blocking pipe to send JSON payloads to a Node-RED HTTP endpoint with retries and error handling."""
+    """An async pipe to send JSON payloads to a Node-RED HTTP endpoint with retries and error handling."""
 
     def __init__(
         self,
@@ -26,9 +26,11 @@ class NodeRedPipe:
         self.retries = retries
         self.retry_delay = retry_delay
         self.ssl_context = self._build_ssl_context(insecure_tls, ca_file)
-        self.queue = queue.Queue(maxsize=queue_size)
-        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.queue = asyncio.Queue(maxsize=queue_size)
+        self.session = None
+        self.worker_task = None
         self.last_error_at = 0
+        self.closed = False
 
     def _build_ssl_context(self, insecure_tls, ca_file):
         if insecure_tls:
@@ -37,62 +39,78 @@ class NodeRedPipe:
             return ssl.create_default_context(cafile=ca_file)
         return None
 
-    def start(self):
-        self.thread.start()
+    async def start(self):
+        if self.worker_task is not None:
+            return
+        self.session = aiohttp.ClientSession()
+        self.worker_task = asyncio.create_task(self._worker())
 
-    def send(self, payload):
+    async def send(self, payload):
+        if self.closed:
+            self._log_error("Node-RED pipe is closed; dropping message")
+            return
+
         try:
             self.queue.put_nowait(payload)
-        except queue.Full:
+        except asyncio.QueueFull:
             self._log_error("Node-RED queue is full; dropping message")
 
-    def _worker(self):
+    async def close(self):
+        self.closed = True
+        if self.worker_task is not None:
+            await self.queue.join()
+            self.worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.worker_task
+        if self.session is not None:
+            await self.session.close()
+
+    async def _worker(self):
         while True:
-            payload = self.queue.get()
+            payload = await self.queue.get()
             try:
-                self._post_with_retries(payload)
+                await self._post_with_retries(payload)
             except Exception as exc:
                 self._log_error(f"Node-RED POST failed: {exc}")
             finally:
                 self.queue.task_done()
 
-    def _post_with_retries(self, payload):
+    async def _post_with_retries(self, payload):
         last_error = None
         for attempt in range(self.retries + 1):
             try:
-                self._post(payload)
+                await self._post(payload)
                 return
             except Exception as exc:
                 last_error = exc
                 if attempt < self.retries:
-                    time.sleep(self.retry_delay)
+                    await asyncio.sleep(self.retry_delay)
 
-        raise last_error  # pyright: ignore[reportGeneralTypeIssues]
+        raise last_error
 
-    def _post(self, payload):
+    async def _post(self, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "airframes-socket-client",
+        }
+
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        async with self.session.post(
             self.url,
             data=body,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "airframes-socket-client",
-            },
-            method="POST",
-        )
-
-        with urllib.request.urlopen(
-            request,
-            timeout=self.timeout,
-            context=self.ssl_context,
+            headers=headers,
+            timeout=timeout,
+            ssl=self.ssl_context,
         ) as response:
             if response.status >= 400:
-                raise urllib.error.HTTPError(
-                    self.url,
-                    response.status,
-                    response.reason,
-                    response.headers,
-                    response,
+                content = await response.text()
+                raise aiohttp.ClientResponseError(
+                    history=(),
+                    request_info=response.request_info,
+                    status=response.status,
+                    message=content,
+                    headers=response.headers,
                 )
 
     def _log_error(self, message):

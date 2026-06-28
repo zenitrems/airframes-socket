@@ -1,7 +1,6 @@
 import shutil
 import json
 
-from requests import get
 
 INLINE_COLUMN_SEPARATOR = " | "
 INLINE_MIN_TEXT_WIDTH = 12
