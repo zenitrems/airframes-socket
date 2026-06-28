@@ -10,84 +10,18 @@ Supported stream modes:
 """
 
 import argparse
+import asyncio
 import json
 import os
 import signal
 
-import socketio
-
-from src.helpers import (
-    parse_filters,
-    matches_filters,
-    inline_summary,
-    inline_summary_header,
-    inline_summary_separator,
-    get_libacars_summary,
-)
-from src.libacars import (
-    DEFAULT_DECODER,
-    LibacarsDecodeError,
-    enrich_airframes_message,
-)
+from src.helpers import parse_filters
+from src.libacars import DEFAULT_DECODER
 from src.nodeRedPipe import NodeRedPipe
+from src.socket_client import build_client, register_handlers
 
-DEFAULT_SOCKET_URL = "https://ws.airframes.io" #PROD 
+DEFAULT_SOCKET_URL = "https://ws.airframes.io"  # PROD
 DEFAULT_NODE_RED_URL = "https://localhost:1880/airframes"
-FILTERS = {}
-
-
-def build_client():
-    return socketio.Client(
-        logger=False,
-        engineio_logger=False,
-        reconnection=True,
-        reconnection_attempts=5,
-        reconnection_delay=2,
-    )
-
-
-sio = build_client()
-
-
-def summarize_message(data):
-    if not isinstance(data, dict):
-        return json.dumps({"event": "message", "payload": data}, ensure_ascii=False)
-
-    station = data.get("station") or {}
-    flight = data.get("flight") or {}
-    airframe = data.get("airframe") or {}
-
-    summary = {
-        "id": data.get("id"),
-        "timestamp": data.get("timestamp"),
-        "station": (station.get("ident"), station.get("country_code")),
-        "flight": {
-            "flight": flight.get("flight"),
-            "flight_icao": flight.get("flight_icao"),
-            "flight_iata": flight.get("flight_iata"),
-        },
-        "airframe": {
-            "icao": airframe.get("icao"),
-            "tail": airframe.get("tail"),
-            "model": airframe.get("manufacturer_model"),
-            "owner": airframe.get("owner"),
-        },
-        "source_info": {
-            "source": data.get("source"),
-            "source_type": data.get("source_type"),
-            "link_direction": data.get("link_direction"),
-            "label": data.get("label"),
-            "mode": data.get("mode"),
-            "frequency": data.get("frequency"),
-        },
-        "message_data": {
-            "message_number": data.get("message_number"),
-            "text": data.get("text"),
-            "block_end": data.get("block_end"),
-        },
-    }
-
-    return json.dumps(summary, ensure_ascii=False, indent=2)
 
 
 def build_parser():
@@ -234,159 +168,21 @@ def build_auth_payload(args):
     return auth or None
 
 
-def register_handlers(
-    stream_mode,
-    station_id=None,
-    summary_mode=False,
-    inline_summary_mode=False,
-    inline_width=None,
-    node_red_pipe=None,
-    node_red_only=False,
-    libacars_enabled=False,
-    libacars_decoder=DEFAULT_DECODER,
-    libacars_timeout=5.0,
-):
-    printed_inline_header = False
-
-    def process_message(data):
-        nonlocal printed_inline_header
-
-        if not matches_filters(data, FILTERS):
-            return
-
-        if libacars_enabled:
-            try:
-                data = enrich_airframes_message(
-                    data,
-                    decoder=libacars_decoder,
-                    timeout=libacars_timeout,
-                )
-            except (LibacarsDecodeError, OSError, ValueError) as exc:
-                if isinstance(data, dict):
-                    data = {
-                        **data,
-                        "libacars": {
-                            "ok": False,
-                            "error": str(exc),
-                        },
-                    }
-
-        if node_red_pipe:
-            node_red_pipe.send(data)
-
-        if node_red_only:
-            return
-
-        if inline_summary_mode:
-            if not printed_inline_header:
-                print(inline_summary_header(inline_width))
-                print(inline_summary_separator(inline_width))
-                printed_inline_header = True
-            print(inline_summary(data, inline_width))
-        elif summary_mode:
-            print(summarize_message(data))
-        else:
-            print(json.dumps(data, ensure_ascii=False, indent=2))
-            print("-" * 40)
-
-    @sio.event
-    def connect():
-        print(f"Connected. Stream mode: {stream_mode}")
-        if stream_mode == "sniff":
-            sio.emit("messages:sniff")
-        elif stream_mode == "station":
-            sio.emit("station:monitor:start", station_id)
-
-    @sio.event
-    def connect_error(data):
-        print("Connection error:", data)
-
-    @sio.event
-    def connect_timeout():
-        print("Connection timeout")
-
-    @sio.event
-    def reconnect():
-        print("Reconnecting...")
-
-    @sio.event
-    def reconnect_attempt():
-        print("Reconnection attempt...")
-
-    @sio.event
-    def reconnect_error():
-        print("Reconnection error")
-
-    @sio.event
-    def reconnect_failed():
-        print("Reconnection failed")
-
-    @sio.event
-    def disconnect():
-        print("Disconnected from server")
-
-    @sio.on("message")
-    def global_message(data):
-        process_message(data)
-
-    @sio.on("messages:sniff:started")
-    def messages_sniff_started(data):
-        print("Global message sniff started:", json.dumps(data, ensure_ascii=False))
-
-    @sio.on("feed:authenticated")
-    def feed_authenticated(data):
-        stations = data.get("stations") if isinstance(data, dict) else None
-        station_count = len(stations or [])
-        print(f"Feed authenticated. Stations: {station_count}")
-
-    @sio.on("feed:message")
-    def feed_message(data):
-        process_message(data)
-
-    @sio.on("station:monitor:started")
-    def station_monitor_started(data):
-        print("Station monitor started:", json.dumps(data, ensure_ascii=False))
-
-    @sio.on("station:monitor:data")
-    def station_monitor_data(data):
-        if not isinstance(data, dict):
-            return
-        for message in data.get("newMessages") or []:
-            process_message(message)
-
-    @sio.on("station:monitor:stopped")
-    def station_monitor_stopped(data):
-        print("Station monitor stopped:", json.dumps(data, ensure_ascii=False))
-
-    @sio.on("feed:error")
-    def feed_error(data):
-        print("Feed error:", data)
-
-    @sio.on("chat:error")
-    def chat_error(data):
-        print("Chat error:", data)
-
-    @sio.on("error")
-    def socket_error(data):
-        print("Socket error:", data)
-
-
-def keyboard_interrupt_handler(signal, frame):
+def keyboard_interrupt_handler(signal_num, frame):
     print("Keyboard interrupt received. Exiting...")
-    sio.disconnect()
-    raise SystemExit(0)
+    raise KeyboardInterrupt
 
 
 signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 
 
-def main():
+async def main():
     global FILTERS
 
     parser = build_parser()
     args = parser.parse_args()
     stream_mode = resolve_stream_mode(args, parser)
-    FILTERS = parse_filters(args.filter)
+
     node_red_pipe = None
 
     if args.node_red_url:
@@ -399,13 +195,18 @@ def main():
             insecure_tls=args.node_red_insecure_tls,
             ca_file=args.node_red_ca_file,
         )
-        node_red_pipe.start()
+        await node_red_pipe.start()
         print(f"Node-RED pipe active: POST {args.node_red_url}")
         if args.node_red_insecure_tls:
             print("Node-RED TLS verification is disabled")
 
+    filters = parse_filters(args.filter)
+    sio = build_client()
+
     register_handlers(
+        sio,
         stream_mode=stream_mode,
+        filters=filters,
         station_id=args.station_id,
         summary_mode=args.summary,
         inline_summary_mode=args.inline_summary,
@@ -417,14 +218,15 @@ def main():
         libacars_timeout=args.libacars_timeout,
     )
 
-    if FILTERS:
+    if filters:
         print(
             "active filters:",
-            json.dumps({key: sorted(values) for key, values in FILTERS.items()}),
+            json.dumps({key: sorted(values) for key, values in filters.items()}),
         )
 
     auth = build_auth_payload(args)
-    sio.connect(
+
+    await sio.connect(
         args.socket_url,
         transports=["websocket"],
         socketio_path="socket.io",
@@ -432,9 +234,13 @@ def main():
         retry=True,
         wait_timeout=10,
     )
-
-    sio.wait()
+    try:
+        await sio.wait()
+    finally:
+        await sio.disconnect()
+        if node_red_pipe:
+            await node_red_pipe.close()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

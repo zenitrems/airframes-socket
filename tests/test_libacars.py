@@ -1,30 +1,35 @@
+import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from src.helpers import get_libacars_summary, inline_summary
 from src.libacars import decode_airframes_message
 
 
 class LibacarsDecodeTests(unittest.TestCase):
-    @patch("src.libacars.subprocess.run")
-    def test_decode_airframes_message_accepts_ads_c_label(self, mock_run):
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = '{"decoded": true}'
+    @patch("src.libacars.asyncio.create_subprocess_exec")
+    def test_decode_airframes_message_accepts_ads_c_label(self, mock_create):
+        proc = AsyncMock()
+        proc.communicate.return_value = (b'{"decoded": true}', b"")
+        proc.returncode = 0
+        mock_create.return_value = proc
 
         message = {"label": "S6", "text": "POSITIVE", "link_direction": "d"}
-        decoded = decode_airframes_message(message, decoder="/usr/bin/fake")
+        decoded = asyncio.run(decode_airframes_message(message, decoder="/usr/bin/fake"))
 
         self.assertEqual(decoded["label"], "S6")
         self.assertEqual(decoded["direction"], "d")
         self.assertEqual(decoded["decoded"], {"decoded": True})
 
-    @patch("src.libacars.subprocess.run")
-    def test_decode_airframes_message_accepts_generic_label(self, mock_run):
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = '{"decoded": true}'
+    @patch("src.libacars.asyncio.create_subprocess_exec")
+    def test_decode_airframes_message_accepts_generic_label(self, mock_create):
+        proc = AsyncMock()
+        proc.communicate.return_value = (b'{"decoded": true}', b"")
+        proc.returncode = 0
+        mock_create.return_value = proc
 
         message = {"label": "OH", "text": "DIAGNOSTIC", "link_direction": "u"}
-        decoded = decode_airframes_message(message, decoder="/usr/bin/fake")
+        decoded = asyncio.run(decode_airframes_message(message, decoder="/usr/bin/fake"))
 
         self.assertEqual(decoded["label"], "OH")
         self.assertEqual(decoded["direction"], "u")

@@ -1,6 +1,6 @@
+import asyncio
 import json
 import os
-import subprocess
 
 
 DEFAULT_DECODER = "/usr/local/bin/decode_acars_apps"
@@ -40,7 +40,7 @@ def parse_decoder_output(output):
     return output
 
 
-def decode_acars_message(direction, label, text, decoder=DEFAULT_DECODER, timeout=5):
+async def decode_acars_message(direction, label, text, decoder=DEFAULT_DECODER, timeout=5):
     label = str(label or "").strip().upper()
     text = str(text or "")
     direction = str(direction or "d").strip().lower()
@@ -56,25 +56,31 @@ def decode_acars_message(direction, label, text, decoder=DEFAULT_DECODER, timeou
     env["LA_JSON"] = "1"
 
     try:
-        result = subprocess.run(
-            [decoder, direction, label, text],
-            capture_output=True,
-            check=False,
+        process = await asyncio.create_subprocess_exec(
+            decoder,
+            direction,
+            label,
+            text,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             env=env,
-            text=True,
-            timeout=timeout,
         )
-    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.wait()
         raise LibacarsDecodeError(f"decoder timed out after {timeout}s") from exc
 
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        raise LibacarsDecodeError(stderr or f"decoder exited with {result.returncode}")
+    stdout_text = stdout.decode("utf-8", errors="replace")
+    stderr_text = stderr.decode("utf-8", errors="replace")
 
-    return parse_decoder_output(result.stdout)
+    if process.returncode != 0:
+        raise LibacarsDecodeError(stderr_text.strip() or f"decoder exited with {process.returncode}")
+
+    return parse_decoder_output(stdout_text)
 
 
-def decode_airframes_message(message, decoder=DEFAULT_DECODER, timeout=5):
+async def decode_airframes_message(message, decoder=DEFAULT_DECODER, timeout=5):
     if not isinstance(message, dict):
         return None
 
@@ -87,7 +93,7 @@ def decode_airframes_message(message, decoder=DEFAULT_DECODER, timeout=5):
         return None
 
     direction = infer_direction(message)
-    decoded = decode_acars_message(
+    decoded = await decode_acars_message(
         direction=direction,
         label=label,
         text=text,
@@ -103,8 +109,8 @@ def decode_airframes_message(message, decoder=DEFAULT_DECODER, timeout=5):
     }
 
 
-def enrich_airframes_message(message, decoder=DEFAULT_DECODER, timeout=5):
-    decoded = decode_airframes_message(message, decoder=decoder, timeout=timeout)
+async def enrich_airframes_message(message, decoder=DEFAULT_DECODER, timeout=5):
+    decoded = await decode_airframes_message(message, decoder=decoder, timeout=timeout)
     if decoded is None:
         return message
 

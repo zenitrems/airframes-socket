@@ -7,58 +7,58 @@ A simple Socket.IO client for consuming the `airframes.io` live stream, filterin
 Show help:
 
 ```bash
-python socket_client.py --help
+python main.py --help
 ```
 
 Listen to the sampled global firehose:
 
 ```bash
-python socket_client.py --stream sniff --inline-summary
+python main.py --stream sniff --inline-summary
 ```
 
 Use the authenticated per-account feed for your own stations:
 
 ```bash
-AIRFRAMES_API_KEY=your_api_key python socket_client.py --stream feed
+AIRFRAMES_API_KEY=your_api_key python main.py --stream feed
 ```
 
 Monitor one station:
 
 ```bash
-python socket_client.py --stream station --station-id 123 --inline-summary
+python main.py --stream station --station-id 123 --inline-summary
 ```
 
 Filter by a payload field:
 
 ```bash
-python socket_client.py --filter station.country_code=US
-python socket_client.py --filter airframe.icao=AE1453
-python socket_client.py --filter airframe.military=true
+python main.py --filter station.country_code=US
+python main.py --filter airframe.icao=AE1453
+python main.py --filter airframe.military=true
 ```
 
 
 Decode supported ACARS applications with libacars before printing or forwarding:
 
 ```bash
-python socket_client.py --libacars --inline-summary
+python main.py --libacars --inline-summary
 ```
 
 Send libacars-enriched events to Node-RED:
 
 ```bash
-python socket_client.py --libacars --node-red-url https://host:1880/airframes --node-red-only
+python main.py --libacars --node-red-url https://host:1880/airframes --node-red-only
 ```
 
 Send events to Node-RED:
 
 ```bash
-python socket_client.py --node-red-url https://host:1880/airframes
+python main.py --node-red-url https://host:1880/airframes
 ```
 
 Send only to Node-RED without local printing:
 
 ```bash
-python socket_client.py --node-red-url https://host:1880/airframes --node-red-only
+python main.py --node-red-url https://host:1880/airframes --node-red-only
 ```
 
 ## Stream modes
