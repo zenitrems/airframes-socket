@@ -4,22 +4,26 @@ A simple Socket.IO client for consuming the `airframes.io` live stream, filterin
 
 ## Basic usage
 
-Show help:
+```bash
+python main.py --options
+```
+
+list all options:
 
 ```bash
 python main.py --help
 ```
 
-Listen to the sampled global firehose:
-
-```bash
-python main.py --stream sniff --inline-summary
-```
-
-Use the authenticated per-account feed for your own stations:
+Use the authenticated feed with your API key:
 
 ```bash
 AIRFRAMES_API_KEY=your_api_key python main.py --stream feed
+```
+
+or
+
+```bash
+python main.py --stream feed --api-key your_api_key
 ```
 
 Monitor one station:
@@ -34,19 +38,13 @@ Filter by a payload field:
 python main.py --filter station.country_code=US
 python main.py --filter airframe.icao=AE1453
 python main.py --filter airframe.military=true
+#See data-example.json for a list of possible fields.
 ```
 
-
-Decode supported ACARS applications with libacars before printing or forwarding:
-
-```bash
-python main.py --libacars --inline-summary
-```
-
-Send libacars-enriched events to Node-RED:
+enable libacars decoding (`libacars` must be installed):
 
 ```bash
-python main.py --libacars --node-red-url https://host:1880/airframes --node-red-only
+python main.py --libacars
 ```
 
 Send events to Node-RED:
@@ -61,7 +59,7 @@ Send only to Node-RED without local printing:
 python main.py --node-red-url https://host:1880/airframes --node-red-only
 ```
 
-Run the container with environment variables:
+Docker build and run:
 
 ```bash
 docker build -t airframes-socket .
@@ -72,14 +70,21 @@ docker run --rm \
   airframes-socket
 ```
 
+Build the container with libacars support:
+
+```bash
+docker build --build-arg INSTALL_LIBACARS=true -t airframes-socket .
+docker run --rm -e LIBACARS=true airframes-socket
+```
+
 ## Stream modes
 
 - `sniff`: sampled global stream using `messages:sniff` and `message` events.
-- `feed`: authenticated, unsampled messages from your own stations using `feed:message`.
+- `feed`: authenticated, unsampled messages from stations using `feed:message`.
 - `station`: live monitor for one station id using `station:monitor:data`.
-- `auto`: uses `station` when `--station-id` is provided, `feed` when an API key is present, otherwise `sniff`.
+- `auto` (default): uses `station` when `--station-id` is provided, `feed` when an API key is present, otherwise `sniff`.
 
-## Node-RED
+## Node-RED or other HTTP endpoints
 
 A Node-RED flow can receive events through an HTTP endpoint such as:
 
@@ -95,5 +100,5 @@ From there, messages can be stored, shown in dashboards, decoded, counted, or us
 - You can repeat multiple `--filter` arguments.
 - `--inline-summary` is useful for compact terminal logs.
 - Set `AIRFRAMES_API_KEY` or pass `--api-key` for the authenticated feed.
-- `--libacars` uses `/usr/local/bin/decode_acars_apps` by default.
+- `--libacars` uses `/usr/local/bin/decode_acars_apps` by default. In Docker, build with `--build-arg INSTALL_LIBACARS=true` and run with `LIBACARS=true`.
 - If you use HTTPS with untrusted certificates in Node-RED, you may need `--node-red-insecure-tls`.
