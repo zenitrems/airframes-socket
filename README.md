@@ -61,6 +61,17 @@ Send only to Node-RED without local printing:
 python main.py --node-red-url https://host:1880/airframes --node-red-only
 ```
 
+Run the container with environment variables:
+
+```bash
+docker build -t airframes-socket .
+docker run --rm \
+  -e STREAM=sniff \
+  -e AIRFRAMES_API_KEY="$AIRFRAMES_API_KEY" \
+  -e NODE_RED_URL="https://host:1880/airframes" \
+  airframes-socket
+```
+
 ## Stream modes
 
 - `sniff`: sampled global stream using `messages:sniff` and `message` events.
