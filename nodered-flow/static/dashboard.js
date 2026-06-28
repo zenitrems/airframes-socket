@@ -24,6 +24,7 @@ const detailText = document.getElementById('detailText');
 const detailJson = document.getElementById('detailJson');
 const libacarsStatus = document.getElementById('libacarsStatus');
 const libacarsJson = document.getElementById('libacarsJson');
+const decodedSummaryEl = document.getElementById('decodedSummary');
 const acarsDecoderStatus = document.getElementById('acarsDecoderStatus');
 const acarsDecoderJson = document.getElementById('acarsDecoderJson');
 const loadAirframeApiBtn = document.getElementById('loadAirframeApi');
@@ -130,6 +131,53 @@ function decodedBadges(e) {
   return parts.join(' ');
 }
 
+function decodeSummaryFromObject(decoded) {
+  if (decoded == null) return '';
+  if (typeof decoded !== 'object') return String(decoded);
+
+  const preferred = [];
+  const keys = ['position', 'latitude', 'longitude', 'altitude', 'flight_level', 'ground_speed', 'track', 'message_type', 'report_type', 'flight_id', 'status'];
+  keys.forEach(key => {
+    if (decoded[key] !== undefined && decoded[key] !== null && decoded[key] !== '') {
+      preferred.push(`${key}=${decoded[key]}`);
+    }
+  });
+
+  if (preferred.length) return preferred.slice(0, 4).join(' ');
+
+  const entries = Object.entries(decoded).filter(([, value]) => value !== null && value !== undefined).slice(0, 4);
+  if (entries.length) {
+    return entries.map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ');
+  }
+
+  return JSON.stringify(decoded);
+}
+
+function decodeSummary(e) {
+  if (e.libacars?.ok) {
+    const summary = decodeSummaryFromObject(e.libacars.decoded);
+    return `[LA] ${summary}`.trim();
+  }
+  if (e.acars_decoded?.ok) {
+    const summary = decodeSummaryFromObject(e.acars_decoded.decoded);
+    return `[TS] ${summary}`.trim();
+  }
+  if (e.decoded) {
+    const summary = decodeSummaryFromObject(e.decoded);
+    return `[DECODED] ${summary}`.trim();
+  }
+  return 'not decoded';
+}
+
+function decodedSummaryCell(e) {
+  const summary = decodeSummary(e);
+  const badges = decodedBadges(e);
+  return `<td class="summary-col">
+    <div class="summary-body">${esc(summary)}</div>
+    ${badges ? `<div class="summary-badges">${badges}</div>` : ''}
+  </td>`;
+}
+
 // ── Airframes link ─────────────────────────────────────────────────────────
 function icaoLink(e) {
   const icao = e.airframe_icao;
@@ -189,6 +237,8 @@ function openDetails(index) {
 
   detailJson.textContent = JSON.stringify(raw, null, 2);
 
+  decodedSummaryEl.textContent = decodeSummary(e);
+
   // Airframe API section — prefer stored data
   if (e.airframes_api) {
     airframeApiStatus.textContent = 'cached in DB';
@@ -240,7 +290,7 @@ async function loadAirframeApi(eventData = selectedEvent) {
 
 // ── Render table ───────────────────────────────────────────────────────────
 function keyText(e) {
-  return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, e.text].join(' ').toLowerCase();
+  return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, decodeSummary(e), e.text].join(' ').toLowerCase();
 }
 
 function render() {
@@ -260,16 +310,31 @@ function render() {
 
   rowsEl.innerHTML = filtered.map(e => {
     const i = events.indexOf(e);
-    return `<tr>
+    return `<tr class="event-row">
       <td>${esc(formatTime(e.timestamp))}</td>
       <td>${icaoLink(e)}</td>
       ${icaoTypeCell(e)}
       <td>${esc(e.flight)}</td>
       <td>${esc(e.tail)}</td>
       <td>${esc(e.label)}</td>
-      <td>${decodedBadges(e)}</td>
+      <td>${esc(e.mode)}</td>
+      <td>${esc(e.source || e.source_type || e.station)}</td>
+      ${decodedSummaryCell(e)}
       <td class="text-col">${esc(e.text)}</td>
       <td><button class="detail-btn" type="button" data-index="${i}">details</button></td>
+    </tr>
+    <tr class="event-meta">
+      <td colspan="11">
+        <div class="meta-grid">
+          <div class="meta-item"><span>station</span><b>${esc(e.station)}</b></div>
+          <div class="meta-item"><span>frequency</span><b>${esc(e.frequency)}</b></div>
+          <div class="meta-item"><span>country</span><b>${esc(e.country)}</b></div>
+          <div class="meta-item"><span>icao type</span><b>${esc(getIcaoTypeFromEvent(e) || (e.airframe_icao ? 'loading…' : '-'))}</b></div>
+          <div class="meta-item"><span>military</span><b>${esc(e.military)}</b></div>
+          <div class="meta-item"><span>raw label</span><b>${esc(e.label)} / ${esc(e.mode)}</b></div>
+        </div>
+        <div class="row-summary">${esc(decodeSummary(e))}</div>
+      </td>
     </tr>`;
   }).join('');
 
