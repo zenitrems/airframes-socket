@@ -12,10 +12,11 @@ Supported stream modes:
 import argparse
 import asyncio
 import json
-import os
 import signal
 
+from src.env import env_bool, env_float, env_int, env_list, env_value, load_dotenv
 from src.helpers import parse_filters
+from src.influx_client import InfluxClient
 from src.libacars import DEFAULT_DECODER
 from src.nodeRedPipe import NodeRedPipe
 from src.socket_client import build_client, register_handlers
@@ -29,7 +30,7 @@ def build_parser():
     parser.add_argument(
         "--stream",
         choices=("auto", "sniff", "feed", "station"),
-        default="auto",
+        default=env_value("STREAM", "auto"),
         help=(
             "Stream mode. auto uses station when --station-id is provided, "
             "feed when --api-key is provided, otherwise sniff. Default: auto."
@@ -37,28 +38,29 @@ def build_parser():
     )
     parser.add_argument(
         "--socket-url",
-        default=DEFAULT_SOCKET_URL,
+        default=env_value("SOCKET_URL", DEFAULT_SOCKET_URL),
         help=f"Socket.IO endpoint. Default: {DEFAULT_SOCKET_URL}",
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("AIRFRAMES_API_KEY"),
+        default=env_value("AIRFRAMES_API_KEY"),
         help="Airframes API key for the unsampled per-account feed. Can also be set with AIRFRAMES_API_KEY.",
     )
     parser.add_argument(
         "--token",
-        default=os.environ.get("AIRFRAMES_TOKEN"),
+        default=env_value("AIRFRAMES_TOKEN"),
         help="JWT for app/user session authentication. Can also be set with AIRFRAMES_TOKEN.",
     )
     parser.add_argument(
         "--station-id",
         type=int,
+        default=env_int("STATION_ID"),
         help="Station id for station monitor mode.",
     )
     parser.add_argument(
         "--filter",
         action="append",
-        default=[],
+        default=env_list("FILTERS"),
         help=(
             "Add a filter in the format field=value. Repeat this argument for multiple filters. "
             "Values can be comma-separated. Example: --filter station.country_code=US,CA"
@@ -67,6 +69,7 @@ def build_parser():
     parser.add_argument(
         "--summary",
         action="store_true",
+        default=env_bool("SUMMARY"),
         help="Print a short JSON summary instead of the complete payload.",
     )
     parser.add_argument(
@@ -74,71 +77,122 @@ def build_parser():
         "--inline_sumary",
         dest="inline_summary",
         action="store_true",
+        default=env_bool("INLINE_SUMMARY"),
         help="Print each message as a single table-like log line.",
     )
     parser.add_argument(
         "--inline-width",
         type=int,
+        default=env_int("INLINE_WIDTH"),
         help="Maximum width for --inline-summary. Defaults to the terminal width.",
     )
     parser.add_argument(
         "--node-red-url",
         nargs="?",
         const=DEFAULT_NODE_RED_URL,
+        default=env_value("NODE_RED_URL"),
         help=f"HTTP endpoint where each filtered JSON message will be POSTed. Default when used without a value: {DEFAULT_NODE_RED_URL}",
     )
     parser.add_argument(
         "--node-red-timeout",
         type=float,
-        default=10.0,
+        default=env_float("NODE_RED_TIMEOUT", 10.0),
         help="Timeout in seconds for POST requests to Node-RED. Default: 10.",
     )
     parser.add_argument(
         "--node-red-queue-size",
         type=int,
-        default=1000,
+        default=env_int("NODE_RED_QUEUE_SIZE", 1000),
         help="Maximum pending messages waiting to be sent to Node-RED. Default: 1000.",
     )
     parser.add_argument(
         "--node-red-retries",
         type=int,
-        default=2,
+        default=env_int("NODE_RED_RETRIES", 2),
         help="Retry attempts for each Node-RED POST after the first failure. Default: 2.",
     )
     parser.add_argument(
         "--node-red-retry-delay",
         type=float,
-        default=1.0,
+        default=env_float("NODE_RED_RETRY_DELAY", 1.0),
         help="Delay in seconds between Node-RED POST retries. Default: 1.",
     )
     parser.add_argument(
         "--node-red-only",
         action="store_true",
+        default=env_bool("NODE_RED_ONLY"),
         help="Send matching events to Node-RED without printing each event locally.",
     )
     parser.add_argument(
         "--node-red-insecure-tls",
         action="store_true",
+        default=env_bool("NODE_RED_INSECURE_TLS"),
         help="Disable TLS certificate verification for the Node-RED POST endpoint.",
     )
     parser.add_argument(
         "--node-red-ca-file",
+        default=env_value("NODE_RED_CA_FILE"),
         help="Path to a CA certificate bundle used to verify the Node-RED HTTPS certificate.",
+    )
+    parser.add_argument(
+        "--influx-url",
+        default=env_value("INFLUX_URL"),
+        help="InfluxDB 2.x base URL. Can also be set with INFLUX_URL.",
+    )
+    parser.add_argument(
+        "--influx-token",
+        default=env_value("INFLUX_TOKEN"),
+        help="InfluxDB API token. Can also be set with INFLUX_TOKEN.",
+    )
+    parser.add_argument(
+        "--influx-org",
+        default=env_value("INFLUX_ORG"),
+        help="InfluxDB organization. Can also be set with INFLUX_ORG.",
+    )
+    parser.add_argument(
+        "--influx-bucket",
+        default=env_value("INFLUX_BUCKET"),
+        help="InfluxDB bucket for airframes_event and airframes_catalog. Can also be set with INFLUX_BUCKET.",
+    )
+    parser.add_argument(
+        "--influx-timeout",
+        type=float,
+        default=env_float("INFLUX_TIMEOUT", 10.0),
+        help="Timeout in seconds for InfluxDB writes. Default: 10.",
+    )
+    parser.add_argument(
+        "--influx-queue-size",
+        type=int,
+        default=env_int("INFLUX_QUEUE_SIZE", 1000),
+        help="Maximum pending messages waiting to be sent to InfluxDB. Default: 1000.",
+    )
+    parser.add_argument(
+        "--influx-retries",
+        type=int,
+        default=env_int("INFLUX_RETRIES", 2),
+        help="Retry attempts for each InfluxDB write after the first failure. Default: 2.",
+    )
+    parser.add_argument(
+        "--influx-retry-delay",
+        type=float,
+        default=env_float("INFLUX_RETRY_DELAY", 1.0),
+        help="Delay in seconds between InfluxDB write retries. Default: 1.",
     )
     parser.add_argument(
         "--libacars",
         action="store_true",
+        default=env_bool("LIBACARS"),
         help="Decode supported ACARS application messages with libacars before output/forwarding.",
     )
     parser.add_argument(
         "--libacars-decoder",
-        default=DEFAULT_DECODER,
+        default=env_value("LIBACARS_DECODER", DEFAULT_DECODER),
         help=f"Path to decode_acars_apps. Default: {DEFAULT_DECODER}",
     )
     parser.add_argument(
         "--libacars-timeout",
         type=float,
-        default=5.0,
+        default=env_float("LIBACARS_TIMEOUT", 5.0),
         help="Timeout in seconds for each libacars decode. Default: 5.",
     )
     return parser
@@ -179,11 +233,13 @@ signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 async def main():
     global FILTERS
 
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
     stream_mode = resolve_stream_mode(args, parser)
 
     node_red_pipe = None
+    influx_client = None
 
     if args.node_red_url:
         node_red_pipe = NodeRedPipe(
@@ -200,6 +256,42 @@ async def main():
         if args.node_red_insecure_tls:
             print("Node-RED TLS verification is disabled")
 
+    influx_args = [
+        args.influx_url,
+        args.influx_token,
+        args.influx_org,
+        args.influx_bucket,
+    ]
+    if any(influx_args):
+        missing = [
+            name
+            for name, value in (
+                ("--influx-url", args.influx_url),
+                ("--influx-token", args.influx_token),
+                ("--influx-org", args.influx_org),
+                ("--influx-bucket", args.influx_bucket),
+            )
+            if not value
+        ]
+        if missing:
+            parser.error("InfluxDB output requires " + ", ".join(missing))
+
+        influx_client = InfluxClient(
+            args.influx_url,
+            token=args.influx_token,
+            org=args.influx_org,
+            bucket=args.influx_bucket,
+            timeout=args.influx_timeout,
+            queue_size=args.influx_queue_size,
+            retries=args.influx_retries,
+            retry_delay=args.influx_retry_delay,
+        )
+        await influx_client.start()
+        print(
+            "InfluxDB output active: "
+            f"{args.influx_url} bucket={args.influx_bucket}"
+        )
+
     filters = parse_filters(args.filter)
     sio = build_client()
 
@@ -213,6 +305,7 @@ async def main():
         inline_width=args.inline_width,
         node_red_pipe=node_red_pipe,
         node_red_only=args.node_red_only,
+        influx_client=influx_client,
         libacars_enabled=args.libacars,
         libacars_decoder=args.libacars_decoder,
         libacars_timeout=args.libacars_timeout,
@@ -240,6 +333,8 @@ async def main():
         await sio.disconnect()
         if node_red_pipe:
             await node_red_pipe.close()
+        if influx_client:
+            await influx_client.close()
 
 
 if __name__ == "__main__":
