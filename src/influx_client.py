@@ -9,7 +9,6 @@ import aiohttp
 
 from src.helpers import get_nested_value
 
-
 EVENT_MEASUREMENT = "airframes_event"
 CATALOG_MEASUREMENT = "airframes_catalog"
 CATALOG_TIMESTAMP_NS = 0
@@ -98,32 +97,90 @@ class InfluxClient:
 
     def build_catalog_line(self, payload):
         normalized = normalize_airframes_message(payload)
+
         icao = normalized["airframe_icao"]
         if not icao:
             return None
 
         event_time = normalized["timestamp"] or utc_now_iso()
+
         state = self.catalog.get(icao)
+
         if state is None:
             state = {
                 "first_seen": event_time,
+                "last_seen": event_time,
                 "message_count": 0,
+                "decoded_messages": 0,
+                "text_messages": 0,
+                "stations": set(),
+                "tail": "",
+                "flight": "",
+                "country": "",
+                "military": False,
+                "first_frequency": 0.0,
+                "last_frequency": 0.0,
+                "last_station": "",
+                "last_label": "",
+                "last_mode": "",
             }
 
         state["message_count"] += 1
         state["last_seen"] = event_time
+
+        if normalized["decoded_ok"]:
+            state["decoded_messages"] += 1
+
+        if normalized["text"]:
+            state["text_messages"] += 1
+
+        if normalized["tail"]:
+            state["tail"] = normalized["tail"]
+
+        if normalized["flight"]:
+            state["flight"] = normalized["flight"]
+
+        if normalized["country"]:
+            state["country"] = normalized["country"]
+
+        if normalized["station"]:
+            state["last_station"] = normalized["station"]
+            state["stations"].add(normalized["station"])
+
+        if normalized["label"]:
+            state["last_label"] = normalized["label"]
+
+        if normalized["mode"]:
+            state["last_mode"] = normalized["mode"]
+
+        if normalized["frequency"] > 0:
+            if state["first_frequency"] == 0:
+                state["first_frequency"] = normalized["frequency"]
+
+            state["last_frequency"] = normalized["frequency"]
+
+        state["military"] = state["military"] or normalized["military"]
+
         self.catalog[icao] = state
 
         tags = {"airframe_icao": icao}
+
         fields = {
-            "tail": normalized["tail"] or "",
-            "flight": normalized["flight"] or "",
-            "military": normalized["military"],
-            "country": normalized["country"] or "",
+            "tail": state["tail"],
+            "flight": state["flight"],
+            "country": state["country"],
+            "military": state["military"],
             "first_seen": state["first_seen"],
             "last_seen": state["last_seen"],
-            "last_frequency": normalized["frequency"],
+            "first_frequency": state["first_frequency"],
+            "last_frequency": state["last_frequency"],
+            "last_station": state["last_station"],
+            "last_label": state["last_label"],
+            "last_mode": state["last_mode"],
             "message_count": state["message_count"],
+            "decoded_messages": state["decoded_messages"],
+            "text_messages": state["text_messages"],
+            "station_count": len(state["stations"]),
         }
 
         return line_protocol(
@@ -188,10 +245,8 @@ class InfluxClient:
 
 def build_event_line(payload):
     normalized = normalize_airframes_message(payload)
+
     tags = {
-        "airframe_icao": normalized["airframe_icao"] or "unknown",
-        "tail": normalized["tail"] or "unknown",
-        "flight": normalized["flight"] or "unknown",
         "station": normalized["station"] or "unknown",
         "country": normalized["country"] or "unknown",
         "source": normalized["source"] or "unknown",
@@ -200,16 +255,24 @@ def build_event_line(payload):
         "mode": normalized["mode"] or "unknown",
         "military": bool_tag(normalized["military"]),
     }
+
     text = normalized["text"] or ""
+
     fields = {
+        "airframe_icao": normalized["airframe_icao"] or "unknown",
+        "tail": normalized["tail"] or "unknown",
+        "flight": normalized["flight"] or "unknown",
         "frequency": normalized["frequency"],
-        "decoded_ok": 1 if normalized["decoded_ok"] else 0,
-        "libacars_ok": 1 if normalized["libacars_ok"] else 0,
-        "api_cached": 1 if normalized["api_cached"] else 0,
-        "text_present": 1 if text else 0,
+        "decoded_ok": int(normalized["decoded_ok"]),
+        "libacars_ok": int(normalized["libacars_ok"]),
+        "api_cached": int(normalized["api_cached"]),
+        "text_present": int(bool(text)),
         "text_length": len(text),
+        "has_tail": int(bool(normalized["tail"])),
+        "has_flight": int(bool(normalized["flight"])),
         "event_count": 1,
     }
+
     timestamp_ns = parse_timestamp_ns(normalized["timestamp"])
 
     return line_protocol(
@@ -224,7 +287,9 @@ def normalize_airframes_message(payload):
     return {
         "timestamp": payload.get("timestamp") or payload.get("created_at"),
         "airframe_icao": clean_string(get_nested_value(payload, "airframe.icao")),
-        "tail": clean_string(get_nested_value(payload, "airframe.tail") or payload.get("tail")),
+        "tail": clean_string(
+            get_nested_value(payload, "airframe.tail") or payload.get("tail")
+        ),
         "flight": clean_string(
             get_nested_value(payload, "flight.flight_iata")
             or get_nested_value(payload, "flight.flight_icao")
