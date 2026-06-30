@@ -62,6 +62,38 @@ if [[ -n "${NODE_RED_CA_FILE:-}" ]]; then
   args+=("--node-red-ca-file" "$NODE_RED_CA_FILE")
 fi
 
+if [[ -n "${INFLUX_URL:-}" ]]; then
+  args+=("--influx-url" "$INFLUX_URL")
+fi
+
+if [[ -n "${INFLUX_TOKEN:-}" ]]; then
+  args+=("--influx-token" "$INFLUX_TOKEN")
+fi
+
+if [[ -n "${INFLUX_ORG:-}" ]]; then
+  args+=("--influx-org" "$INFLUX_ORG")
+fi
+
+if [[ -n "${INFLUX_BUCKET:-}" ]]; then
+  args+=("--influx-bucket" "$INFLUX_BUCKET")
+fi
+
+if [[ -n "${INFLUX_TIMEOUT:-}" ]]; then
+  args+=("--influx-timeout" "$INFLUX_TIMEOUT")
+fi
+
+if [[ -n "${INFLUX_QUEUE_SIZE:-}" ]]; then
+  args+=("--influx-queue-size" "$INFLUX_QUEUE_SIZE")
+fi
+
+if [[ -n "${INFLUX_RETRIES:-}" ]]; then
+  args+=("--influx-retries" "$INFLUX_RETRIES")
+fi
+
+if [[ -n "${INFLUX_RETRY_DELAY:-}" ]]; then
+  args+=("--influx-retry-delay" "$INFLUX_RETRY_DELAY")
+fi
+
 if [[ "${NODE_RED_ONLY:-}" =~ ^(1|true|yes)$ ]]; then
   args+=("--node-red-only")
 fi

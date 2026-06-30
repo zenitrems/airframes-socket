@@ -72,6 +72,7 @@ def register_handlers(
     inline_width=None,
     node_red_pipe=None,
     node_red_only=False,
+    influx_client=None,
     libacars_enabled=False,
     libacars_decoder=DEFAULT_DECODER,
     libacars_timeout=5,
@@ -103,6 +104,9 @@ def register_handlers(
 
         if node_red_pipe:
             await node_red_pipe.send(data)
+
+        if influx_client:
+            await influx_client.send(data)
 
         if node_red_only:
             return
