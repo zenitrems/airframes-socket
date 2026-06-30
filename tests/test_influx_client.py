@@ -37,6 +37,22 @@ class InfluxClientTests(unittest.TestCase):
         self.assertIn("text_length=5i", line)
         self.assertIn("event_count=1i", line)
 
+    def test_frequency_fields_are_always_float(self):
+        client = InfluxClient(
+            "http://localhost:8086",
+            token="token",
+            org="org",
+            bucket="bucket",
+        )
+
+        event_line = build_event_line(sample_message(frequency=136000000))
+        catalog_line = client.build_catalog_line(sample_message(frequency=0))
+
+        self.assertIn("frequency=136000000.0", event_line)
+        self.assertNotIn("frequency=136000000i", event_line)
+        self.assertIn("last_frequency=0.0", catalog_line)
+        self.assertNotIn("last_frequency=0i", catalog_line)
+
     def test_catalog_line_keeps_one_entity_per_icao(self):
         client = InfluxClient(
             "http://localhost:8086",

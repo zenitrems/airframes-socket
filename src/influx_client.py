@@ -10,7 +10,7 @@ import aiohttp
 from src.helpers import get_nested_value
 
 
-EVENT_MEASUREMENT = "message_event"
+EVENT_MEASUREMENT = "airframes_event"
 CATALOG_MEASUREMENT = "airframes_catalog"
 CATALOG_TIMESTAMP_NS = 0
 
@@ -237,7 +237,7 @@ def normalize_airframes_message(payload):
         "label": clean_string(payload.get("label")),
         "mode": clean_string(payload.get("mode")),
         "military": bool_value(get_nested_value(payload, "airframe.military")),
-        "frequency": numeric_value(payload.get("frequency"), default=0),
+        "frequency": float_value(payload.get("frequency"), default=0.0),
         "decoded_ok": bool_value(get_nested_value(payload, "acars_decoded.ok")),
         "libacars_ok": bool_value(get_nested_value(payload, "libacars.ok")),
         "api_cached": bool_value(payload.get("airframes_api")),
@@ -293,16 +293,13 @@ def clean_string(value):
     return str(value).strip()
 
 
-def numeric_value(value, default=0):
+def float_value(value, default=0.0):
     if value is None or value == "":
         return default
     try:
-        number = float(value)
+        return float(value)
     except (TypeError, ValueError):
         return default
-    if number.is_integer():
-        return int(number)
-    return number
 
 
 def bool_tag(value):
