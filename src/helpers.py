@@ -1,18 +1,21 @@
 import shutil
 import json
 
-
 INLINE_COLUMN_SEPARATOR = " | "
-INLINE_MIN_TEXT_WIDTH = 12
+INLINE_MIN_TEXT_WIDTH = 11
 DEFAULT_INLINE_WIDTH = 120
 INLINE_SUMMARY_BASE_COLUMNS = [
-    ("time", 24, 19),
-    ("station", 18, 12),
+    ("time", 24, 15),
+    ("type", 8, 3),
+    ("station", 19, 12),
     ("cc", 2, 2),
-    ("flight", 6, 6),
     ("icao", 6, 6),
-    ("tail", 8, 6),
-    ("mil", 3, 3),
+    ("tail", 8, 8),
+    ("e", 1, 1),
+    ("m", 1, 1),
+    ("l", 2, 2),
+    ("b", 1, 1),
+    ("a", 1, 1),
 ]
 
 
@@ -204,16 +207,16 @@ def inline_summary(data, max_width=None):
 
     values = {
         "time": data.get("timestamp"),
+        "type": get_nested_value(data, "station.source_type"),
         "station": get_nested_value(data, "station.ident"),
         "cc": get_nested_value(data, "station.country_code"),
-        "flight": (
-            get_nested_value(data, "flight.flight_iata")
-            or get_nested_value(data, "flight.flight_icao")
-            or get_nested_value(data, "flight.flight")
-        ),
         "icao": get_nested_value(data, "airframe.icao"),
         "tail": get_nested_value(data, "airframe.tail") or data.get("tail"),
-        "mil": military,
+        "e": data.get("error"),
+        "m": data.get("mode"),
+        "l": data.get("label"),
+        "b": data.get("block_id"),
+        "a": data.get("ack"),
         "text": text_content if text_content else data.get("text", ""),
     }
 
@@ -241,7 +244,6 @@ def get_libacars_summary(message):
 
     if not decoded:
         return None
-
 
     if isinstance(decoded, dict):
         # Try to extract meaningful fields
