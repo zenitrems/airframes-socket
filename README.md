@@ -70,6 +70,37 @@ Send only to Node-RED without local printing:
 python main.py --node-red-url https://host:1880/airframes --node-red-only
 ```
 
+Send analytics to InfluxDB 2.x:
+
+```bash
+python main.py \
+  --influx-url http://localhost:8086 \
+  --influx-token "$INFLUX_TOKEN" \
+  --influx-org "$INFLUX_ORG" \
+  --influx-bucket airframes
+```
+
+Or create a local `.env` file:
+
+```bash
+STREAM=feed
+AIRFRAMES_API_KEY=your_airframes_api_key
+INFLUX_URL=http://localhost:8086
+INFLUX_TOKEN=your_influx_token
+INFLUX_ORG=your_org
+INFLUX_BUCKET=airframes
+INLINE_SUMMARY=true
+```
+
+Most CLI options can also be set in `.env` using uppercase names such as
+`SOCKET_URL`, `STATION_ID`, `FILTERS`, `NODE_RED_URL`, `NODE_RED_ONLY`,
+`LIBACARS`, `LIBACARS_DECODER`, and `LIBACARS_TIMEOUT`.
+
+InfluxDB writes use two measurements in the same bucket:
+
+- `airframes_event`: append-only history of every received ACARS message.
+- `airframes_catalog`: one logical aircraft entity per ICAO, updated with latest tail, flight, country, frequency, first/last seen, and message count.
+
 Docker build and run:
 
 ```bash
@@ -112,4 +143,5 @@ From there, messages can be stored, shown in dashboards, decoded, counted, or us
 - `--inline-summary` is useful for compact terminal logs.
 - Set `AIRFRAMES_API_KEY` or pass `--api-key` for the authenticated feed.
 - `--libacars` uses `/usr/local/bin/decode_acars_apps` by default. In Docker, build with `--build-arg INSTALL_LIBACARS=true` and run with `LIBACARS=true`.
+- InfluxDB output requires `INFLUX_URL`, `INFLUX_TOKEN`, `INFLUX_ORG`, and `INFLUX_BUCKET`.
 - If you use HTTPS with untrusted certificates in Node-RED, you may need `--node-red-insecure-tls`.
