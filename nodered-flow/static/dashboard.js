@@ -178,7 +178,7 @@ function decodedSummaryCell(e) {
   </td>`;
 }
 
-// ── Airframes link ─────────────────────────────────────────────────────────
+// ── Tbg Map ─────────────────────────────────────────────────────────
 function icaoLink(e) {
   const icao = e.airframe_icao;
   if (!icao) return '-';
@@ -293,6 +293,7 @@ function keyText(e) {
   return [e.timestamp, e.airframe_icao, e.flight, e.tail, e.label, decodeSummary(e), e.text].join(' ').toLowerCase();
 }
 
+
 function render() {
   const q = qEl.value.trim().toLowerCase();
   const mil = milEl.value;
@@ -316,10 +317,8 @@ function render() {
       ${icaoTypeCell(e)}
       <td>${esc(e.flight)}</td>
       <td>${esc(e.tail)}</td>
-      <td>${esc(e.label)}</td>
-      <td>${esc(e.mode)}</td>
+      <td>${esc(e.label)} / ${esc(e.mode)}</td>
       <td>${esc(e.source || e.source_type || e.station)}</td>
-      ${decodedSummaryCell(e)}
       <td class="text-col">${esc(e.text)}</td>
       <td><button class="detail-btn" type="button" data-index="${i}">details</button></td>
     </tr>
@@ -329,9 +328,8 @@ function render() {
           <div class="meta-item"><span>station</span><b>${esc(e.station)}</b></div>
           <div class="meta-item"><span>frequency</span><b>${esc(e.frequency)}</b></div>
           <div class="meta-item"><span>country</span><b>${esc(e.country)}</b></div>
-          <div class="meta-item"><span>icao type</span><b>${esc(getIcaoTypeFromEvent(e) || (e.airframe_icao ? 'loading…' : '-'))}</b></div>
           <div class="meta-item"><span>military</span><b>${esc(e.military)}</b></div>
-          <div class="meta-item"><span>raw label</span><b>${esc(e.label)} / ${esc(e.mode)}</b></div>
+      
         </div>
         <div class="row-summary">${esc(decodeSummary(e))}</div>
       </td>
