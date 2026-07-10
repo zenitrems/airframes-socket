@@ -1,9 +1,11 @@
 import asyncio
 import contextlib
-from datetime import datetime, timezone
-from urllib.parse import urlencode
+import csv
+import io
 import sys
 import time
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import aiohttp
 
@@ -41,11 +43,19 @@ class InfluxClient:
         self.last_error_at = 0
         self.closed = False
         self.catalog = {}
+        # Last timestamp (ns) emitted per (icao, station), used to avoid
+        # point collisions when two messages share the same second.
+        self._last_event_ts = {}
 
     async def start(self):
         if self.worker_task is not None:
             return
         self.session = aiohttp.ClientSession()
+        # Preload the catalog from InfluxDB so counters survive restarts.
+        try:
+            await self._load_catalog()
+        except Exception as exc:
+            self._log_error(f"InfluxDB catalog preload failed: {exc}")
         self.worker_task = asyncio.create_task(self._worker())
 
     async def send(self, payload):
@@ -85,7 +95,7 @@ class InfluxClient:
             return []
 
         lines = []
-        event_line = build_event_line(payload)
+        event_line = self.build_event_line(payload)
         if event_line:
             lines.append(event_line)
 
@@ -95,8 +105,66 @@ class InfluxClient:
 
         return lines
 
+    def build_event_line(self, payload):
+        normalized = normalize_airframes_message(payload)
+
+        tags = {
+            "airframe_icao": normalized["airframe_icao"] or "unknown",
+            "station": normalized["station"] or "unknown",
+            "country": normalized["country"] or "unknown",
+            "source": normalized["source"] or "unknown",
+            "source_type": normalized["source_type"] or "unknown",
+            "label": normalized["label"] or "unknown",
+            "mode": normalized["mode"] or "unknown",
+            "military": bool_tag(normalized["military"]),
+        }
+
+        text = normalized["text"] or ""
+
+        fields = {
+            "tail": normalized["tail"] or "unknown",
+            "flight": normalized["flight"] or "unknown",
+            "libacars_ok": int(normalized["libacars_ok"]),
+            "text_present": int(bool(text)),
+            "text_length": len(text),
+            # Full message body so it can be browsed from Grafana.
+            # Newlines are stored escaped (see escape_string_field).
+            "text": text,
+            "event_count": 1,
+        }
+
+        timestamp_ns = parse_timestamp_ns(normalized["timestamp"])
+        if timestamp_ns is None:
+            # Fall back to arrival time so deduplication still applies.
+            timestamp_ns = time.time_ns()
+
+        key = (tags["airframe_icao"], tags["station"])
+        timestamp_ns = self._dedupe_ts(key, timestamp_ns)
+
+        return line_protocol(
+            EVENT_MEASUREMENT,
+            tags,
+            fields,
+            timestamp_ns=timestamp_ns,
+        )
+
+    def _dedupe_ts(self, key, ts_ns):
+        """Ensure strictly increasing timestamps per key.
+
+        InfluxDB overwrites points that share measurement + tags + timestamp.
+        ACARS timestamps often have second precision, so two messages from
+        the same aircraft/station in the same second would silently replace
+        each other. Bumping by 1 ns keeps every event.
+        """
+        last = self._last_event_ts.get(key, 0)
+        if ts_ns <= last:
+            ts_ns = last + 1
+        self._last_event_ts[key] = ts_ns
+        return ts_ns
+
     def build_catalog_line(self, payload):
-        """the aircraf catalog is a stateful representation of the aircraft seen in the events, and is updated with each event"""
+        """The aircraft catalog is a stateful representation of the aircraft
+        seen in the events, and is updated with each event."""
         normalized = normalize_airframes_message(payload)
 
         icao = normalized["airframe_icao"]
@@ -108,26 +176,13 @@ class InfluxClient:
         state = self.catalog.get(icao)
 
         if state is None:
-            state = {
-                "first_seen": event_time,
-                "last_seen": event_time,
-                "message_count": 0,
-                "decoded_messages": 0,
-                "text_messages": 0,
-                "stations": set(),
-                "tail": "",
-                "flight": "",
-                "country": "",
-                "military": False,
-                "first_frequency": 0.0,
-                "last_frequency": 0.0,
-                "last_station": "",
-                "last_label": "",
-                "last_mode": "",
-            }
+            state = self._new_catalog_state(event_time)
 
         state["message_count"] += 1
         state["last_seen"] = event_time
+
+        if normalized["libacars_ok"]:
+            state["decoded_messages"] += 1
 
         if normalized["text"]:
             state["text_messages"] += 1
@@ -170,7 +225,11 @@ class InfluxClient:
             "message_count": state["message_count"],
             "decoded_messages": state["decoded_messages"],
             "text_messages": state["text_messages"],
-            "station_count": len(state["stations"]),
+            # The full station set cannot be recovered after a restart, only
+            # its size; never let the published count go backwards.
+            "station_count": max(
+                state["station_count_floor"], len(state["stations"])
+            ),
         }
 
         return line_protocol(
@@ -179,6 +238,104 @@ class InfluxClient:
             fields,
             timestamp_ns=CATALOG_TIMESTAMP_NS,
         )
+
+    @staticmethod
+    def _new_catalog_state(event_time):
+        return {
+            "first_seen": event_time,
+            "last_seen": event_time,
+            "message_count": 0,
+            "decoded_messages": 0,
+            "text_messages": 0,
+            "stations": set(),
+            "station_count_floor": 0,
+            "tail": "",
+            "flight": "",
+            "country": "",
+            "military": False,
+            "last_station": "",
+            "last_label": "",
+            "last_mode": "",
+        }
+
+    async def _load_catalog(self):
+        """Preload catalog state from InfluxDB so counters (message_count,
+        first_seen, ...) survive process restarts instead of resetting to
+        zero and overwriting the stored point."""
+        flux = (
+            f'from(bucket: "{self.bucket}")'
+            " |> range(start: 0)"
+            f' |> filter(fn: (r) => r._measurement == "{CATALOG_MEASUREMENT}")'
+            ' |> pivot(rowKey: ["airframe_icao"], columnKey: ["_field"],'
+            ' valueColumn: "_value")'
+        )
+        headers = {
+            "Authorization": f"Token {self.token}",
+            "Content-Type": "application/vnd.flux",
+            "Accept": "application/csv",
+        }
+        params = urlencode({"org": self.org})
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+
+        async with self.session.post(
+            f"{self.url}/api/v2/query?{params}",
+            data=flux.encode("utf-8"),
+            headers=headers,
+            timeout=timeout,
+        ) as response:
+            if response.status >= 400:
+                content = await response.text()
+                raise RuntimeError(
+                    f"catalog query returned {response.status}: {content[:200]}"
+                )
+            body = await response.text()
+
+        loaded = 0
+        header = None
+        for row in csv.reader(io.StringIO(body)):
+            if not row or row[0].startswith("#"):
+                continue
+            if "airframe_icao" in row:
+                header = {name: index for index, name in enumerate(row)}
+                continue
+            if header is None:
+                continue
+
+            def col(name, default=""):
+                index = header.get(name)
+                if index is None or index >= len(row):
+                    return default
+                return row[index]
+
+            icao = col("airframe_icao")
+            if not icao:
+                continue
+
+            state = self._new_catalog_state(col("first_seen") or utc_now_iso())
+            state["first_seen"] = col("first_seen") or state["first_seen"]
+            state["last_seen"] = col("last_seen") or state["last_seen"]
+            state["message_count"] = to_int(col("message_count"))
+            state["decoded_messages"] = to_int(col("decoded_messages"))
+            state["text_messages"] = to_int(col("text_messages"))
+            state["station_count_floor"] = to_int(col("station_count"))
+            state["tail"] = col("tail")
+            state["flight"] = col("flight")
+            state["country"] = col("country")
+            state["military"] = to_bool(col("military"))
+            state["last_station"] = col("last_station")
+            state["last_label"] = col("last_label")
+            state["last_mode"] = col("last_mode")
+            if state["last_station"]:
+                state["stations"].add(state["last_station"])
+
+            self.catalog[icao] = state
+            loaded += 1
+
+        if loaded:
+            print(
+                f"InfluxDB catalog preloaded: {loaded} aircraft",
+                file=sys.stderr,
+            )
 
     async def _write_with_retries(self, lines):
         last_error = None
@@ -231,41 +388,6 @@ class InfluxClient:
             return
         self.last_error_at = now
         print(message, file=sys.stderr)
-
-
-def build_event_line(payload):
-    normalized = normalize_airframes_message(payload)
-
-    tags = {
-        "station": normalized["station"] or "unknown",
-        "country": normalized["country"] or "unknown",
-        "source": normalized["source"] or "unknown",
-        "source_type": normalized["source_type"] or "unknown",
-        "label": normalized["label"] or "unknown",
-        "mode": normalized["mode"] or "unknown",
-        "military": bool_tag(normalized["military"]),
-    }
-
-    text = normalized["text"] or ""
-
-    fields = {
-        "airframe_icao": normalized["airframe_icao"] or "unknown",
-        "tail": normalized["tail"] or "unknown",
-        "flight": normalized["flight"] or "unknown",
-        "libacars_ok": int(normalized["libacars_ok"]),
-        "text_present": int(bool(text)),
-        "text_length": len(text),
-        "event_count": 1,
-    }
-
-    timestamp_ns = parse_timestamp_ns(normalized["timestamp"])
-
-    return line_protocol(
-        EVENT_MEASUREMENT,
-        tags,
-        fields,
-        timestamp_ns=timestamp_ns,
-    )
 
 
 def normalize_airframes_message(payload):
@@ -340,13 +462,19 @@ def clean_string(value):
     return str(value).strip()
 
 
-def float_value(value, default=0.0):
+def to_int(value, default=0):
     if value is None or value == "":
         return default
     try:
-        return float(value)
+        return int(float(value))
     except (TypeError, ValueError):
         return default
+
+
+def to_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def bool_tag(value):
@@ -378,7 +506,16 @@ def escape_tag_value(value):
 
 
 def escape_string_field(value):
-    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+    # Line protocol does not allow raw newlines inside field values: a
+    # newline terminates the point. ACARS text frequently contains \r\n,
+    # so store them as the literal two-character sequences "\n" / "\r".
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
 
 
 def format_field_value(value):
