@@ -169,9 +169,15 @@ def register_handlers(
 
     @sio.on("feed:authenticated")
     async def feed_authenticated(data):
+        username = data.get("username") if isinstance(data, dict) else None
         stations = data.get("stations") if isinstance(data, dict) else None
         station_count = len(stations or [])
-        print(f"Feed authenticated. Stations: {station_count}")
+        print(f"Feed authenticated. User: {username}. Stations: {station_count}")
+
+    @sio.on("chat:authenticated")
+    async def chat_authenticated(data):
+        user_id = data.get("userId") if isinstance(data, dict) else None
+        print(f"Chat authenticated. User ID: {user_id}")
 
     @sio.on("feed:message")
     async def feed_message(data):
@@ -194,12 +200,15 @@ def register_handlers(
 
     @sio.on("feed:error")
     async def feed_error(data):
-        print("Feed error:", data)
+        message = data.get("message") if isinstance(data, dict) else data
+        print("Feed error:", message)
 
     @sio.on("chat:error")
     async def chat_error(data):
-        print("Chat error:", data)
+        message = data.get("message") if isinstance(data, dict) else data
+        print("Chat error:", message)
 
     @sio.on("error")
     async def socket_error(data):
-        print("Socket error:", data)
+        message = data.get("message") if isinstance(data, dict) else data
+        print("Socket error:", message)
