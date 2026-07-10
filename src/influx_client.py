@@ -96,6 +96,7 @@ class InfluxClient:
         return lines
 
     def build_catalog_line(self, payload):
+        """the aircraf catalog is a stateful representation of the aircraft seen in the events, and is updated with each event"""
         normalized = normalize_airframes_message(payload)
 
         icao = normalized["airframe_icao"]
@@ -128,9 +129,6 @@ class InfluxClient:
         state["message_count"] += 1
         state["last_seen"] = event_time
 
-        if normalized["decoded_ok"]:
-            state["decoded_messages"] += 1
-
         if normalized["text"]:
             state["text_messages"] += 1
 
@@ -153,12 +151,6 @@ class InfluxClient:
         if normalized["mode"]:
             state["last_mode"] = normalized["mode"]
 
-        if normalized["frequency"] > 0:
-            if state["first_frequency"] == 0:
-                state["first_frequency"] = normalized["frequency"]
-
-            state["last_frequency"] = normalized["frequency"]
-
         state["military"] = state["military"] or normalized["military"]
 
         self.catalog[icao] = state
@@ -172,8 +164,6 @@ class InfluxClient:
             "military": state["military"],
             "first_seen": state["first_seen"],
             "last_seen": state["last_seen"],
-            "first_frequency": state["first_frequency"],
-            "last_frequency": state["last_frequency"],
             "last_station": state["last_station"],
             "last_label": state["last_label"],
             "last_mode": state["last_mode"],
@@ -262,14 +252,9 @@ def build_event_line(payload):
         "airframe_icao": normalized["airframe_icao"] or "unknown",
         "tail": normalized["tail"] or "unknown",
         "flight": normalized["flight"] or "unknown",
-        "frequency": normalized["frequency"],
-        "decoded_ok": int(normalized["decoded_ok"]),
         "libacars_ok": int(normalized["libacars_ok"]),
-        "api_cached": int(normalized["api_cached"]),
         "text_present": int(bool(text)),
         "text_length": len(text),
-        "has_tail": int(bool(normalized["tail"])),
-        "has_flight": int(bool(normalized["flight"])),
         "event_count": 1,
     }
 
@@ -302,10 +287,7 @@ def normalize_airframes_message(payload):
         "label": clean_string(payload.get("label")),
         "mode": clean_string(payload.get("mode")),
         "military": bool_value(get_nested_value(payload, "airframe.military")),
-        "frequency": float_value(payload.get("frequency"), default=0.0),
-        "decoded_ok": bool_value(get_nested_value(payload, "acars_decoded.ok")),
         "libacars_ok": bool_value(get_nested_value(payload, "libacars.ok")),
-        "api_cached": bool_value(payload.get("airframes_api")),
         "text": payload.get("text") if isinstance(payload.get("text"), str) else "",
     }
 
