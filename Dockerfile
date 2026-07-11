@@ -21,6 +21,7 @@ WORKDIR /app
 
 COPY --from=builder /venv /venv
 ENV PATH="/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
 
 # Copy the source code into the container.
 COPY . .
