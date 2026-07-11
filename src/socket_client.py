@@ -16,8 +16,9 @@ def build_client():
         logger=False,
         engineio_logger=False,
         reconnection=True,
-        reconnection_attempts=5,
+        reconnection_attempts=0,  # retry forever; ws.airframes.io occasionally 502s
         reconnection_delay=2,
+        reconnection_delay_max=60,
     )
 
 
@@ -78,6 +79,7 @@ def register_handlers(
     libacars_timeout=5,
 ):
     printed_inline_header = False
+    connect_error_count = 0
 
     async def process_message(data):
         nonlocal printed_inline_header
@@ -125,6 +127,8 @@ def register_handlers(
 
     @sio.event
     async def connect():
+        nonlocal connect_error_count
+        connect_error_count = 0
         print(f"Connected. Stream mode: {stream_mode}")
         if stream_mode == "sniff":
             await sio.emit("messages:sniff")
@@ -133,27 +137,9 @@ def register_handlers(
 
     @sio.event
     async def connect_error(data):
-        print("Connection error:", data)
-
-    @sio.event
-    async def connect_timeout():
-        print("Connection timeout")
-
-    @sio.event
-    async def reconnect():
-        print("Reconnecting...")
-
-    @sio.event
-    async def reconnect_attempt():
-        print("Reconnection attempt...")
-
-    @sio.event
-    async def reconnect_error():
-        print("Reconnection error")
-
-    @sio.event
-    async def reconnect_failed():
-        print("Reconnection failed")
+        nonlocal connect_error_count
+        connect_error_count += 1
+        print(f"Connection error (attempt {connect_error_count}): {data}. Retrying...")
 
     @sio.event
     async def disconnect():

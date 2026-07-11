@@ -23,6 +23,8 @@ from src.socket_client import build_client, register_handlers
 
 DEFAULT_SOCKET_URL = "https://ws.airframes.io"  # PROD
 DEFAULT_NODE_RED_URL = "https://localhost:1880/airframes"
+RECONNECT_BASE_DELAY = 2.0
+RECONNECT_MAX_DELAY = 60.0
 
 
 def build_parser():
@@ -319,18 +321,30 @@ async def main():
 
     auth = build_auth_payload(args)
 
-    await sio.connect(
-        args.socket_url,
-        transports=["websocket"],
-        socketio_path="socket.io",
-        auth=auth,
-        retry=True,
-        wait_timeout=10,
-    )
+    reconnect_delay = RECONNECT_BASE_DELAY
     try:
-        await sio.wait()
+        while True:
+            try:
+                await sio.connect(
+                    args.socket_url,
+                    transports=["websocket"],
+                    socketio_path="socket.io",
+                    auth=auth,
+                    retry=True,
+                    wait_timeout=10,
+                )
+                reconnect_delay = RECONNECT_BASE_DELAY
+                await sio.wait()
+            except Exception as exc:
+                print(f"Socket connection lost: {exc}")
+            finally:
+                if sio.connected:
+                    await sio.disconnect()
+
+            print(f"Reconnecting in {reconnect_delay:.0f}s...")
+            await asyncio.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, RECONNECT_MAX_DELAY)
     finally:
-        await sio.disconnect()
         if node_red_pipe:
             await node_red_pipe.close()
         if influx_client:
