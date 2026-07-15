@@ -275,3 +275,26 @@ def get_libacars_summary(message):
         )
 
     return f"[{label}] {str(decoded)[:50]}"
+
+
+def get_libacars_decoded_text(message):
+    """Full pretty-printed JSON of the libacars decode, for display in Grafana."""
+    if not isinstance(message, dict):
+        return ""
+
+    libacars = message.get("libacars")
+    if not isinstance(libacars, dict):
+        return ""
+
+    if not libacars.get("ok"):
+        error = libacars.get("error")
+        return f"Error: {error}" if error else ""
+
+    decoded = libacars.get("decoded")
+    if decoded is None:
+        return ""
+
+    if isinstance(decoded, str):
+        return decoded
+
+    return json.dumps(decoded, ensure_ascii=False, indent=2, sort_keys=True)

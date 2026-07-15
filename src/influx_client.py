@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from src.helpers import get_nested_value
+from src.helpers import get_libacars_decoded_text, get_nested_value
 
 EVENT_MEASUREMENT = "airframes_event"
 CATALOG_MEASUREMENT = "airframes_catalog"
@@ -120,6 +120,7 @@ class InfluxClient:
         }
 
         text = normalized["text"] or ""
+        libacars_text = normalized["libacars_text"] or ""
 
         fields = {
             "tail": normalized["tail"] or "unknown",
@@ -130,6 +131,9 @@ class InfluxClient:
             # Full message body so it can be browsed from Grafana.
             # Newlines are stored escaped (see escape_string_field).
             "text": text,
+            # Pretty-printed libacars decode (JSON), for a dedicated
+            # Grafana panel. Empty when there's nothing to decode.
+            "libacars_text": libacars_text,
             "event_count": 1,
         }
 
@@ -187,6 +191,9 @@ class InfluxClient:
         if normalized["text"]:
             state["text_messages"] += 1
 
+        if normalized["libacars_text"]:
+            state["last_decoded_text"] = normalized["libacars_text"]
+
         if normalized["tail"]:
             state["tail"] = normalized["tail"]
 
@@ -222,6 +229,7 @@ class InfluxClient:
             "last_station": state["last_station"],
             "last_label": state["last_label"],
             "last_mode": state["last_mode"],
+            "last_decoded_text": state["last_decoded_text"],
             "message_count": state["message_count"],
             "decoded_messages": state["decoded_messages"],
             "text_messages": state["text_messages"],
@@ -256,6 +264,7 @@ class InfluxClient:
             "last_station": "",
             "last_label": "",
             "last_mode": "",
+            "last_decoded_text": "",
         }
 
     async def _load_catalog(self):
@@ -325,6 +334,7 @@ class InfluxClient:
             state["last_station"] = col("last_station")
             state["last_label"] = col("last_label")
             state["last_mode"] = col("last_mode")
+            state["last_decoded_text"] = col("last_decoded_text")
             if state["last_station"]:
                 state["stations"].add(state["last_station"])
 
@@ -411,6 +421,7 @@ def normalize_airframes_message(payload):
         "military": bool_value(get_nested_value(payload, "airframe.military")),
         "libacars_ok": bool_value(get_nested_value(payload, "libacars.ok")),
         "text": payload.get("text") if isinstance(payload.get("text"), str) else "",
+        "libacars_text": get_libacars_decoded_text(payload),
     }
 
 

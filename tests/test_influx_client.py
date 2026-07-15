@@ -1,6 +1,6 @@
 import unittest
 
-from src.influx_client import InfluxClient, build_event_line
+from src.influx_client import InfluxClient
 
 
 def sample_message(**overrides):
@@ -13,53 +13,57 @@ def sample_message(**overrides):
         "source_type": "acars",
         "label": "H1",
         "mode": "2",
-        "frequency": 130.025,
         "text": "hello",
-        "acars_decoded": {"ok": True},
         "libacars": {"ok": False},
     }
     message.update(overrides)
     return message
 
 
+def build_client():
+    return InfluxClient(
+        "http://localhost:8086",
+        token="token",
+        org="org",
+        bucket="bucket",
+    )
+
+
 class InfluxClientTests(unittest.TestCase):
     def test_event_line_uses_icao_as_tag_and_event_count_field(self):
-        line = build_event_line(sample_message())
+        line = build_client().build_event_line(sample_message())
 
         self.assertIn("airframes_event,", line)
         self.assertIn("airframe_icao=A1B2C3", line)
-        self.assertIn("tail=N123AB", line)
-        self.assertIn("flight=AA123", line)
-        self.assertIn("frequency=130.025", line)
-        self.assertIn("decoded_ok=1i", line)
+        self.assertIn('tail="N123AB"', line)
+        self.assertIn('flight="AA123"', line)
         self.assertIn("libacars_ok=0i", line)
         self.assertIn("text_present=1i", line)
         self.assertIn("text_length=5i", line)
         self.assertIn("event_count=1i", line)
 
-    def test_frequency_fields_are_always_float(self):
-        client = InfluxClient(
-            "http://localhost:8086",
-            token="token",
-            org="org",
-            bucket="bucket",
+    def test_event_line_includes_pretty_printed_libacars_decoded_text(self):
+        message = sample_message(
+            label="SA",
+            libacars={
+                "ok": True,
+                "label": "SA",
+                "decoded": {"position": "40N", "flight_id": "AAL234"},
+            },
         )
 
-        event_line = build_event_line(sample_message(frequency=136000000))
-        catalog_line = client.build_catalog_line(sample_message(frequency=0))
+        line = build_client().build_event_line(message)
 
-        self.assertIn("frequency=136000000.0", event_line)
-        self.assertNotIn("frequency=136000000i", event_line)
-        self.assertIn("last_frequency=0.0", catalog_line)
-        self.assertNotIn("last_frequency=0i", catalog_line)
+        self.assertIn('libacars_text="{\\n', line)
+        self.assertIn('flight_id\\": \\"AAL234\\"', line)
+
+    def test_event_line_libacars_text_empty_when_decode_missing(self):
+        line = build_client().build_event_line(sample_message())
+
+        self.assertIn('libacars_text="",', line)
 
     def test_catalog_line_keeps_one_entity_per_icao(self):
-        client = InfluxClient(
-            "http://localhost:8086",
-            token="token",
-            org="org",
-            bucket="bucket",
-        )
+        client = build_client()
 
         first = client.build_catalog_line(sample_message())
         second = client.build_catalog_line(
@@ -67,6 +71,8 @@ class InfluxClientTests(unittest.TestCase):
                 timestamp="2026-06-30T12:05:00Z",
                 airframe={"icao": "A1B2C3", "tail": "N456CD", "military": True},
                 flight={"flight_iata": "AA456"},
+                label="SA",
+                libacars={"ok": True, "label": "SA", "decoded": {"position": "40N"}},
             )
         )
 
@@ -78,14 +84,10 @@ class InfluxClientTests(unittest.TestCase):
         self.assertIn('flight="AA456"', second)
         self.assertIn("military=true", second)
         self.assertIn("message_count=2i", second)
+        self.assertIn('last_decoded_text="{\\n  \\"position\\": \\"40N\\"\\n}"', second)
 
     def test_catalog_skips_messages_without_icao(self):
-        client = InfluxClient(
-            "http://localhost:8086",
-            token="token",
-            org="org",
-            bucket="bucket",
-        )
+        client = build_client()
 
         line = client.build_catalog_line(sample_message(airframe={}))
 
