@@ -9,10 +9,12 @@ from urllib.parse import urlencode
 
 import aiohttp
 
+from src.flight_init import parse_flight_init_message
 from src.helpers import get_libacars_decoded_text, get_nested_value
 
 EVENT_MEASUREMENT = "airframes_event"
 CATALOG_MEASUREMENT = "airframes_catalog"
+FLIGHT_MEASUREMENT = "airframes_flight"
 CATALOG_TIMESTAMP_NS = 0
 
 
@@ -43,6 +45,9 @@ class InfluxClient:
         self.last_error_at = 0
         self.closed = False
         self.catalog = {}
+        # Active flight entity per airframe_icao, opened by an H1 MDINI/INI
+        # message and closed when the next one arrives for that aircraft.
+        self.flights = {}
         # Last timestamp (ns) emitted per (icao, station), used to avoid
         # point collisions when two messages share the same second.
         self._last_event_ts = {}
@@ -56,6 +61,10 @@ class InfluxClient:
             await self._load_catalog()
         except Exception as exc:
             self._log_error(f"InfluxDB catalog preload failed: {exc}")
+        try:
+            await self._load_flights()
+        except Exception as exc:
+            self._log_error(f"InfluxDB flight preload failed: {exc}")
         self.worker_task = asyncio.create_task(self._worker())
 
     async def send(self, payload):
@@ -95,7 +104,11 @@ class InfluxClient:
             return []
 
         lines = []
-        event_line = self.build_event_line(payload)
+
+        flight_lines, flight_uid = self._process_flight_state(payload)
+        lines.extend(flight_lines)
+
+        event_line = self.build_event_line(payload, flight_uid=flight_uid)
         if event_line:
             lines.append(event_line)
 
@@ -105,7 +118,7 @@ class InfluxClient:
 
         return lines
 
-    def build_event_line(self, payload):
+    def build_event_line(self, payload, flight_uid=None):
         normalized = normalize_airframes_message(payload)
 
         tags = {
@@ -135,6 +148,9 @@ class InfluxClient:
             # Grafana panel. Empty when there's nothing to decode.
             "libacars_text": libacars_text,
             "event_count": 1,
+            # id of the active flight entity (opened by an H1 MDINI/INI
+            # message) this event belongs to, if any.
+            "flight_uid": flight_uid or "",
         }
 
         timestamp_ns = parse_timestamp_ns(normalized["timestamp"])
@@ -266,6 +282,156 @@ class InfluxClient:
             "last_mode": "",
             "last_decoded_text": "",
         }
+
+    def _process_flight_state(self, payload):
+        """Track flight entities opened by H1 MDINI/INI messages.
+
+        An MDINI/INI message for an aircraft closes whatever flight entity
+        was previously active for it and opens a new one. Every other
+        message for that aircraft is folded into the currently active
+        entity (message_count, last_seen) without changing its identity.
+
+        Returns (lines, flight_uid) where lines are line-protocol points for
+        the airframes_flight measurement (closed and/or updated entity) and
+        flight_uid is the id of the entity this payload belongs to, if any.
+        """
+        normalized = normalize_airframes_message(payload)
+        icao = normalized["airframe_icao"]
+        if not icao:
+            return [], None
+
+        event_time = normalized["timestamp"] or utc_now_iso()
+        init = parse_flight_init_message(payload)
+        state = self.flights.get(icao)
+        lines = []
+
+        if init:
+            if state is not None and state["status"] == "active":
+                state["status"] = "closed"
+                state["closed_at"] = event_time
+                lines.append(self._flight_line(icao, state))
+
+            state = self._new_flight_state(icao, init, event_time)
+            self.flights[icao] = state
+        elif state is None:
+            return [], None
+        else:
+            state["last_seen"] = event_time
+
+        state["message_count"] += 1
+        lines.append(self._flight_line(icao, state))
+
+        return lines, state["flight_uid"]
+
+    @staticmethod
+    def _new_flight_state(icao, init, event_time):
+        return {
+            "flight_uid": f"{icao}-{init['flight_init_id']}-{event_time}",
+            "callsign": init["callsign"],
+            "departure": init["departure"],
+            "arrival": init["arrival"],
+            "dataref": init["dataref"],
+            "opened_at": event_time,
+            "last_seen": event_time,
+            "closed_at": "",
+            "status": "active",
+            "message_count": 0,
+        }
+
+    @staticmethod
+    def _flight_line(icao, state):
+        tags = {"airframe_icao": icao, "flight_uid": state["flight_uid"]}
+        fields = {
+            "callsign": state["callsign"] or "unknown",
+            "departure": state["departure"] or "unknown",
+            "arrival": state["arrival"] or "unknown",
+            "dataref": state["dataref"] or "unknown",
+            "opened_at": state["opened_at"],
+            "last_seen": state["last_seen"],
+            "closed_at": state["closed_at"],
+            "status": state["status"],
+            "message_count": state["message_count"],
+        }
+
+        return line_protocol(
+            FLIGHT_MEASUREMENT,
+            tags,
+            fields,
+            timestamp_ns=CATALOG_TIMESTAMP_NS,
+        )
+
+    async def _load_flights(self):
+        """Preload active flight entities from InfluxDB so a restart doesn't
+        lose track of the flight currently in progress for each aircraft."""
+        flux = (
+            f'from(bucket: "{self.bucket}")'
+            " |> range(start: 0)"
+            f' |> filter(fn: (r) => r._measurement == "{FLIGHT_MEASUREMENT}")'
+            ' |> pivot(rowKey: ["airframe_icao", "flight_uid"],'
+            ' columnKey: ["_field"], valueColumn: "_value")'
+        )
+        headers = {
+            "Authorization": f"Token {self.token}",
+            "Content-Type": "application/vnd.flux",
+            "Accept": "application/csv",
+        }
+        params = urlencode({"org": self.org})
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+
+        async with self.session.post(
+            f"{self.url}/api/v2/query?{params}",
+            data=flux.encode("utf-8"),
+            headers=headers,
+            timeout=timeout,
+        ) as response:
+            if response.status >= 400:
+                content = await response.text()
+                raise RuntimeError(
+                    f"flight query returned {response.status}: {content[:200]}"
+                )
+            body = await response.text()
+
+        loaded = 0
+        header = None
+        for row in csv.reader(io.StringIO(body)):
+            if not row or row[0].startswith("#"):
+                continue
+            if "airframe_icao" in row and "flight_uid" in row:
+                header = {name: index for index, name in enumerate(row)}
+                continue
+            if header is None:
+                continue
+
+            def col(name, default=""):
+                index = header.get(name)
+                if index is None or index >= len(row):
+                    return default
+                return row[index]
+
+            icao = col("airframe_icao")
+            flight_uid = col("flight_uid")
+            if not icao or not flight_uid or col("status") != "active":
+                continue
+
+            self.flights[icao] = {
+                "flight_uid": flight_uid,
+                "callsign": col("callsign"),
+                "departure": col("departure"),
+                "arrival": col("arrival"),
+                "dataref": col("dataref"),
+                "opened_at": col("opened_at"),
+                "last_seen": col("last_seen"),
+                "closed_at": col("closed_at"),
+                "status": "active",
+                "message_count": to_int(col("message_count")),
+            }
+            loaded += 1
+
+        if loaded:
+            print(
+                f"InfluxDB flight preload: {loaded} active flights",
+                file=sys.stderr,
+            )
 
     async def _load_catalog(self):
         """Preload catalog state from InfluxDB so counters (message_count,

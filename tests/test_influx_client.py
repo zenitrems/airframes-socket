@@ -94,5 +94,80 @@ class InfluxClientTests(unittest.TestCase):
         self.assertIsNone(line)
 
 
+MDINI_TEXT = (
+    "- #MDINI/ID44129A RCH268 PAM306410163/MR0 0/AFPHNL PGWT/TD132140 00509B35"
+)
+
+
+class FlightEntityTests(unittest.TestCase):
+    def test_mdini_message_opens_a_flight_entity(self):
+        client = build_client()
+
+        lines = client.build_lines(sample_message(text=MDINI_TEXT))
+
+        flight_lines = [line for line in lines if "airframes_flight," in line]
+        self.assertEqual(len(flight_lines), 1)
+        line = flight_lines[0]
+        self.assertIn("airframe_icao=A1B2C3", line)
+        self.assertIn('callsign="RCH268"', line)
+        self.assertIn('departure="PHNL"', line)
+        self.assertIn('arrival="PGWT"', line)
+        self.assertIn('status="active"', line)
+        self.assertIn("message_count=1i", line)
+
+        event_lines = [line for line in lines if line.startswith("airframes_event")]
+        self.assertIn('flight_uid="', event_lines[0])
+
+    def test_non_mdini_messages_are_folded_into_the_active_flight(self):
+        client = build_client()
+
+        client.build_lines(sample_message(text=MDINI_TEXT))
+        state = client.flights["A1B2C3"]
+        flight_uid = state["flight_uid"]
+
+        lines = client.build_lines(sample_message(label="SA", text="hello again"))
+
+        event_line = next(line for line in lines if line.startswith("airframes_event"))
+        self.assertIn(f'flight_uid="{flight_uid}"', event_line)
+
+        flight_line = next(line for line in lines if "airframes_flight," in line)
+        self.assertIn("message_count=2i", flight_line)
+        self.assertIn('status="active"', flight_line)
+
+    def test_second_mdini_closes_the_previous_flight_and_opens_a_new_one(self):
+        client = build_client()
+
+        client.build_lines(sample_message(text=MDINI_TEXT))
+        first_uid = client.flights["A1B2C3"]["flight_uid"]
+
+        second_text = (
+            "INI/ID15734T,RCH403,GJZF710QJ198/MR0,1/AFKLRF,KHRT/TD171245,1245011F"
+        )
+        lines = client.build_lines(
+            sample_message(text=second_text, timestamp="2026-06-30T13:00:00Z")
+        )
+
+        flight_lines = [line for line in lines if "airframes_flight," in line]
+        self.assertEqual(len(flight_lines), 2)
+
+        closed_line = next(line for line in flight_lines if f"flight_uid={first_uid}" in line)
+        self.assertIn('status="closed"', closed_line)
+
+        new_uid = client.flights["A1B2C3"]["flight_uid"]
+        self.assertNotEqual(new_uid, first_uid)
+        opened_line = next(line for line in flight_lines if f"flight_uid={new_uid}" in line)
+        self.assertIn('status="active"', opened_line)
+        self.assertIn('callsign="RCH403"', opened_line)
+
+    def test_messages_without_an_active_flight_have_no_flight_uid(self):
+        client = build_client()
+
+        lines = client.build_lines(sample_message())
+
+        self.assertFalse(any("airframes_flight," in line for line in lines))
+        event_line = next(line for line in lines if line.startswith("airframes_event"))
+        self.assertIn('flight_uid=""', event_line)
+
+
 if __name__ == "__main__":
     unittest.main()

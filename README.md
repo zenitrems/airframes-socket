@@ -96,10 +96,11 @@ Most CLI options can also be set in `.env` using uppercase names such as
 `SOCKET_URL`, `STATION_ID`, `FILTERS`, `NODE_RED_URL`, `NODE_RED_ONLY`,
 `LIBACARS`, `LIBACARS_DECODER`, and `LIBACARS_TIMEOUT`.
 
-InfluxDB writes use two measurements in the same bucket:
+InfluxDB writes use three measurements in the same bucket:
 
-- `airframes_event`: append-only history of every received ACARS message.
+- `airframes_event`: append-only history of every received ACARS message. Includes a `flight_uid` field pointing at the active flight entity (if any) for that aircraft.
 - `airframes_catalog`: one logical aircraft entity per ICAO, updated with latest tail, flight, country, frequency, first/last seen, and message count.
+- `airframes_flight`: one entity per flight session, opened by a label `H1` `#MDINI`/`INI` message (callsign, departure/arrival, dataref) and closed when the next one arrives for the same aircraft. Every other message from that aircraft while the entity is active is folded into it (`message_count`, `last_seen`), giving a record of all initialized flights and the messages exchanged during each one.
 
 Docker build and run:
 
