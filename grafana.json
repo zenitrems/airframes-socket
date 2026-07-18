@@ -599,7 +599,7 @@
                         "name": "aed656tuduyo0a"
                       },
                       "spec": {
-                        "query": "import \"strings\"\n\nfrom(bucket: \"airframes\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n      r._measurement == \"airframes_event\" and\n      r.airframe_icao =~ /^${ICAO:regex}$/\n  )\n  |> filter(fn: (r) =>\n      r._field == \"text\" or\n      r._field == \"libacars_text\" or\n      r._field == \"libacars_ok\" or\n      r._field == \"tail\" or\n      r._field == \"flight\"\n  )\n  |> pivot(\n      rowKey: [\n        \"_time\",\n        \"airframe_icao\",\n        \"station\",\n        \"country\",\n        \"source\",\n        \"source_type\",\n        \"label\"\n      ],\n      columnKey: [\"_field\"],\n      valueColumn: \"_value\"\n  )\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 500)\n  |> map(fn: (r) => ({\n      r with\n      libacars_text: if exists r.libacars_text then strings.replaceAll(v: r.libacars_text, t: \"\\\\n\", u: \"\\n\") else \"\"\n  }))\n  |> keep(columns: [\n      \"_time\",\n      \"airframe_icao\",\n      \"tail\",\n      \"flight\",\n      \"station\",\n      \"country\",\n      \"label\",\n      \"source_type\",\n      \"libacars_ok\",\n      \"text\",\n      \"libacars_text\"\n  ])"
+                        "query": "import \"strings\"\n\nfrom(bucket: \"airframes\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n      r._measurement == \"airframes_event\" and\n      r.airframe_icao =~ /^${ICAO:regex}$/\n  )\n  |> filter(fn: (r) =>\n      r._field == \"text\" or\n      r._field == \"libacars_text\" or\n      r._field == \"libacars_ok\" or\n      r._field == \"tail\" or\n      r._field == \"flight\" or\n      r._field == \"flight_uid\"\n  )\n  |> pivot(\n      rowKey: [\n        \"_time\",\n        \"airframe_icao\",\n        \"station\",\n        \"country\",\n        \"source\",\n        \"source_type\",\n        \"label\"\n      ],\n      columnKey: [\"_field\"],\n      valueColumn: \"_value\"\n  )\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 500)\n  |> map(fn: (r) => ({\n      r with\n      libacars_text: if exists r.libacars_text then strings.replaceAll(v: r.libacars_text, t: \"\\\\n\", u: \"\\n\") else \"\",\n      flight_uid: if exists r.flight_uid then r.flight_uid else \"\"\n  }))\n  |> keep(columns: [\n      \"_time\",\n      \"airframe_icao\",\n      \"tail\",\n      \"flight\",\n      \"station\",\n      \"country\",\n      \"label\",\n      \"source_type\",\n      \"libacars_ok\",\n      \"text\",\n      \"libacars_text\",\n      \"flight_uid\"\n  ])"
                       }
                     },
                     "refId": "A",
@@ -685,6 +685,18 @@
                       {
                         "id": "custom.minWidth",
                         "value": 400
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "flight_uid"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 260
                       }
                     ]
                   },
@@ -856,7 +868,7 @@
                   "color": "rgba(255,0,255,0.7)"
                 },
                 "filterValues": {
-                  "le": 1e-9
+                  "le": 1e-09
                 },
                 "legend": {
                   "show": true
@@ -1100,6 +1112,309 @@
             }
           }
         }
+      },
+      "panel-11": {
+        "kind": "Panel",
+        "spec": {
+          "id": 11,
+          "title": "Vuelos activos (MDINI)",
+          "description": "Vuelos abiertos por un mensaje H1 #MDINI/INI que aún no han sido cerrados por el siguiente.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "influxdb",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "aed656tuduyo0a"
+                      },
+                      "spec": {
+                        "query": "from(bucket: \"airframes\")\n  |> range(start: 0)\n  |> filter(fn: (r) =>\n      r._measurement == \"airframes_flight\" and\n      r._field == \"status\" and\n      r.airframe_icao =~ /^${ICAO:regex}$/\n  )\n  |> filter(fn: (r) => r._value == \"active\")\n  |> group()\n  |> count()"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.1.0",
+            "spec": {
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "percentChangeColorMode": "standard",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": true
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "0"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-12": {
+        "kind": "Panel",
+        "spec": {
+          "id": 12,
+          "title": "Vuelos totales (MDINI)",
+          "description": "Vuelos identificados por mensajes H1 #MDINI/INI, activos y cerrados.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "influxdb",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "aed656tuduyo0a"
+                      },
+                      "spec": {
+                        "query": "from(bucket: \"airframes\")\n  |> range(start: 0)\n  |> filter(fn: (r) =>\n      r._measurement == \"airframes_flight\" and\n      r._field == \"status\" and\n      r.airframe_icao =~ /^${ICAO:regex}$/\n  )\n  |> group()\n  |> count()"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.1.0",
+            "spec": {
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "percentChangeColorMode": "standard",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": true
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "blue"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "0"
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-13": {
+        "kind": "Panel",
+        "spec": {
+          "id": 13,
+          "title": "Vuelos (MDINI)",
+          "description": "Vuelos abiertos por mensajes H1 #MDINI/INI: callsign, origen/destino, dataref y estado. Un flight_uid agrupa todos los mensajes recibidos mientras el vuelo estuvo activo.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "influxdb",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "aed656tuduyo0a"
+                      },
+                      "spec": {
+                        "query": "from(bucket: \"airframes\")\n  |> range(start: 0)\n  |> filter(fn: (r) =>\n      r._measurement == \"airframes_flight\" and\n      r.airframe_icao =~ /^${ICAO:regex}$/\n  )\n  |> pivot(\n      rowKey: [\"airframe_icao\", \"flight_uid\"],\n      columnKey: [\"_field\"],\n      valueColumn: \"_value\"\n  )\n  |> group()\n  |> sort(columns: [\"opened_at\"], desc: true)\n  |> limit(n: 500)\n  |> keep(columns: [\n      \"airframe_icao\",\n      \"callsign\",\n      \"departure\",\n      \"arrival\",\n      \"dataref\",\n      \"status\",\n      \"message_count\",\n      \"opened_at\",\n      \"last_seen\",\n      \"closed_at\",\n      \"flight_uid\"\n  ])"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.1.0",
+            "spec": {
+              "options": {
+                "cellHeight": "sm",
+                "enablePagination": true,
+                "frameIndex": 0,
+                "showHeader": true
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "-",
+                  "custom": {
+                    "align": "left",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "filterable": true,
+                    "footer": {
+                      "reducers": []
+                    },
+                    "hideFrom": {
+                      "viz": false
+                    },
+                    "inspect": true,
+                    "wrapHeaderText": false,
+                    "wrapText": false
+                  },
+                  "fieldMinMax": false
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "status"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "mappings",
+                        "value": [
+                          {
+                            "type": "value",
+                            "options": {
+                              "active": {
+                                "text": "active",
+                                "color": "green"
+                              },
+                              "closed": {
+                                "text": "closed",
+                                "color": "text"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "id": "custom.width",
+                        "value": 90
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "flight_uid"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 260
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "airframe_icao"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 120
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "layout": {
@@ -1233,6 +1548,45 @@
               "element": {
                 "kind": "ElementReference",
                 "name": "panel-10"
+              }
+            }
+          },
+          {
+            "kind": "GridLayoutItem",
+            "spec": {
+              "x": 0,
+              "y": 47,
+              "width": 6,
+              "height": 4,
+              "element": {
+                "kind": "ElementReference",
+                "name": "panel-11"
+              }
+            }
+          },
+          {
+            "kind": "GridLayoutItem",
+            "spec": {
+              "x": 6,
+              "y": 47,
+              "width": 6,
+              "height": 4,
+              "element": {
+                "kind": "ElementReference",
+                "name": "panel-12"
+              }
+            }
+          },
+          {
+            "kind": "GridLayoutItem",
+            "spec": {
+              "x": 0,
+              "y": 51,
+              "width": 24,
+              "height": 12,
+              "element": {
+                "kind": "ElementReference",
+                "name": "panel-13"
               }
             }
           }
