@@ -1,7 +1,7 @@
 services:
   airframes-socket:
     container_name: airframes-socket
-    image: airframes-socket:libacars
+    image: airframes-socket
     restart: no
     environment:
       - AIRFRAMES_API_KEY=${AIRFRAMES_API_KEY}
