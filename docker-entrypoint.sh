@@ -20,7 +20,10 @@ if [[ -n "${AIRFRAMES_TOKEN:-}" ]]; then
 fi
 
 if [[ -n "${STATION_ID:-}" ]]; then
-  args+=("--station-id" "$STATION_ID")
+  IFS=',' read -ra station_ids <<< "$STATION_ID"
+  for station_id in "${station_ids[@]}"; do
+    args+=("--station-id" "$station_id")
+  done
 fi
 
 if [[ -n "${FILTERS:-}" ]]; then
