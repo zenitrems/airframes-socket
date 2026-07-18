@@ -45,7 +45,7 @@ class MainParserEnvironmentTests(unittest.TestCase):
             self.assertEqual(args.socket_url, "https://example.test")
             self.assertEqual(args.api_key, "airframes-key")
             self.assertEqual(args.token, "jwt-token")
-            self.assertEqual(args.station_id, 123)
+            self.assertEqual(args.station_id, ["123"])
             self.assertEqual(
                 args.filter,
                 ["station.country_code=US", "airframe.military=true"],

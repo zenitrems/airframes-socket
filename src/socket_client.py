@@ -67,7 +67,7 @@ def register_handlers(
     sio,
     stream_mode,
     filters,
-    station_id=None,
+    station_ids=None,
     summary_mode=False,
     inline_summary_mode=False,
     inline_width=None,
@@ -133,7 +133,8 @@ def register_handlers(
         if stream_mode == "sniff":
             await sio.emit("messages:sniff")
         elif stream_mode == "station":
-            await sio.emit("station:monitor:start", station_id)
+            for station_id in station_ids or []:
+                await sio.emit("station:monitor:start", station_id)
 
     @sio.event
     async def connect_error(data):

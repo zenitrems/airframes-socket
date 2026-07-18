@@ -15,7 +15,7 @@ import json
 import signal
 
 from src.env import env_bool, env_float, env_int, env_list, env_value, load_dotenv
-from src.helpers import parse_filters
+from src.helpers import parse_filters, parse_station_ids
 from src.influx_client import InfluxClient
 from src.libacars import DEFAULT_DECODER
 from src.nodeRedPipe import NodeRedPipe
@@ -55,9 +55,13 @@ def build_parser():
     )
     parser.add_argument(
         "--station-id",
-        type=int,
-        default=env_int("STATION_ID"),
-        help="Station id for station monitor mode.",
+        action="append",
+        default=env_list("STATION_ID"),
+        help=(
+            "Station id for station monitor mode. Repeat this argument or pass "
+            "a comma-separated list to monitor several stations at once. "
+            "Example: --station-id 123 --station-id 456 or --station-id 123,456"
+        ),
     )
     parser.add_argument(
         "--filter",
@@ -200,9 +204,9 @@ def build_parser():
     return parser
 
 
-def resolve_stream_mode(args, parser):
+def resolve_stream_mode(args, parser, station_ids):
     if args.stream == "auto":
-        if args.station_id is not None:
+        if station_ids:
             return "station"
         if args.api_key:
             return "feed"
@@ -210,7 +214,7 @@ def resolve_stream_mode(args, parser):
 
     if args.stream == "feed" and not args.api_key:
         parser.error("--stream feed requires --api-key or AIRFRAMES_API_KEY")
-    if args.stream == "station" and args.station_id is None:
+    if args.stream == "station" and not station_ids:
         parser.error("--stream station requires --station-id")
     return args.stream
 
@@ -238,7 +242,13 @@ async def main():
     load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
-    stream_mode = resolve_stream_mode(args, parser)
+
+    try:
+        station_ids = parse_station_ids(args.station_id)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    stream_mode = resolve_stream_mode(args, parser, station_ids)
 
     node_red_pipe = None
     influx_client = None
@@ -301,7 +311,7 @@ async def main():
         sio,
         stream_mode=stream_mode,
         filters=filters,
-        station_id=args.station_id,
+        station_ids=station_ids,
         summary_mode=args.summary,
         inline_summary_mode=args.inline_summary,
         inline_width=args.inline_width,

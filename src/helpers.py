@@ -55,6 +55,28 @@ def parse_filters(raw_filters):
     return parsed_filters
 
 
+def parse_station_ids(raw_station_ids):
+    station_ids = []
+    seen = set()
+
+    for raw_station_id in raw_station_ids or []:
+        for item in str(raw_station_id).split(","):
+            item = item.strip()
+            if not item:
+                continue
+
+            try:
+                station_id = int(item)
+            except ValueError:
+                raise ValueError(f"Invalid station id '{item}'. Must be an integer.")
+
+            if station_id not in seen:
+                seen.add(station_id)
+                station_ids.append(station_id)
+
+    return station_ids
+
+
 def normalize_filter_value(value):
     if isinstance(value, bool):
         return "true" if value else "false"

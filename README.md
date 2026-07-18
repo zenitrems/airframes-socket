@@ -43,6 +43,13 @@ Monitor one station:
 python main.py --stream station --station-id 123 --inline-summary
 ```
 
+Monitor several stations at once (repeat the flag or use a comma-separated list):
+
+```bash
+python main.py --stream station --station-id 123 --station-id 456 --inline-summary
+python main.py --stream station --station-id 123,456,789 --inline-summary
+```
+
 Filter by a payload field:
 
 ```bash
@@ -124,7 +131,7 @@ docker run --rm -e LIBACARS=true airframes-socket
 
 - `sniff`: sampled global stream using `messages:sniff` and `message` events.
 - `feed`: authenticated, unsampled messages from stations using `feed:message`.
-- `station`: live monitor for one station id using `station:monitor:data`.
+- `station`: live monitor for one or more station ids using `station:monitor:data`.
 - `auto` (default): uses `station` when `--station-id` is provided, `feed` when an API key is present, otherwise `sniff`.
 
 ## Node-RED or other HTTP endpoints
